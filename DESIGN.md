@@ -80,16 +80,14 @@ multiple email accounts across different providers.
 │  ┌───────────────────────────────────────────┐                  │
 │  │              Storage Layer                │                  │
 │  │                                           │                  │
-│  │  ┌────────────┐ ┌─────────────────────┐   │                  │
-│  │  │ Message DB │ │ Attachment Blob     │   │                  │
-│  │  │ (metadata, │ │ Storage (S3/local)  │   │                  │
-│  │  │  state,    │ │                     │   │                  │
-│  │  │  audit log)│ │ ┌─────────────────┐ │   │                  │
-│  │  └────────────┘ │ │ Search Index    │ │   │                  │
-│  │                 │ │ (OCR'd text,    │ │   │                  │
-│  │                 │ │  extracted data)│ │   │                  │
-│  │                 │ └─────────────────┘ │   │                  │
-│  │                 └─────────────────────┘   │                  │
+│  │  ┌──────────────────────┐ ┌───────────┐   │                  │
+│  │  │  Couchbase Capella   │ │    S3     │   │                  │
+│  │  │  - messages          │ │  (blobs)  │   │                  │
+│  │  │  - attachment meta   │ │           │   │                  │
+│  │  │  - rules & config    │ │  PDFs,    │   │                  │
+│  │  │  - audit log         │ │  images,  │   │                  │
+│  │  │  - FTS indexes       │ │  docs     │   │                  │
+│  │  └──────────────────────┘ └───────────┘   │                  │
 │  └───────────────────────────────────────────┘                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -231,21 +229,21 @@ Custom agents can be registered by users.
 
 ### Storage Layer
 
-Three storage concerns:
+Two storage systems:
 
-1. **Message DB** — metadata, processing state, audit trail
-   - Which messages were processed, when, what actions taken
-   - Rule match history (which rules fired, what was extracted)
-   - Per-account sync cursors
+1. **Couchbase Capella** — all structured data and search
+   - Message documents (NormalizedMessage + processing metadata)
+   - Attachment metadata (S3 key, filename, mime type, OCR text)
+   - Per-account sync cursors and config
+   - Rule definitions
+   - Audit log (append-only collection)
+   - **FTS indexes** over OCR'd text, message bodies, extracted data —
+     no separate search engine needed
 
-2. **Attachment Blob Storage** — original files
-   - Content-addressed (hash-keyed) to dedup identical attachments
-   - Retention policies per user/account
-
-3. **Search Index** — full-text search over OCR'd documents and extracted data
-   - OCR text from PDFs and images
-   - Extracted structured data
-   - Message body text (optional, configurable)
+2. **S3** — attachment blob storage
+   - Original files, content-addressed by SHA-256 hash
+   - Lifecycle policies for retention per user/account
+   - Presigned URLs for secure agent access to attachments
 
 ## Security
 
@@ -284,44 +282,132 @@ This eliminates entire classes of attacks:
 - Immutable audit log — append-only
 - Per-user activity visible to account owner
 
+## Tech Decisions
+
+| Decision         | Choice                | Rationale                                    |
+|------------------|-----------------------|----------------------------------------------|
+| **Language**     | Python                | Best Gmail/Graph SDKs, Tesseract bindings    |
+| **Database**     | Couchbase Capella     | Document store fits message model; built-in  |
+|                  |                       | FTS eliminates need for separate search index|
+| **Blob storage** | S3                   | Standard, scalable, lifecycle policies       |
+| **Agent comms**  | HTTP callbacks        | Simple, debuggable, language-agnostic        |
+
+### Why Couchbase Capella
+
+- **Document model** — NormalizedMessage maps directly to a JSON document,
+  no ORM impedance mismatch
+- **Full-text search** — built-in FTS indexes OCR'd text, message bodies,
+  and extracted data without a separate service (Elasticsearch, etc.)
+- **Scopes & collections** — natural multi-tenancy: one scope per user,
+  collections for messages, attachments metadata, audit logs, rules
+- **SQL++** — familiar query language for complex lookups (messages by
+  date range, tag combinations, account)
+- **Capella managed** — no ops burden for cluster management, backups,
+  scaling
+
+### Collection Structure
+
+```
+bucket: mail-agent
+├── scope: user_{user_id}
+│   ├── collection: messages        # NormalizedMessage documents
+│   ├── collection: attachments     # Attachment metadata (blob ref → S3 key)
+│   ├── collection: rules           # User-defined processing rules
+│   ├── collection: accounts        # Email account configs + sync cursors
+│   ├── collection: audit_log       # Immutable action log
+│   └── collection: agent_registry  # Registered downstream agents
+└── scope: _default
+    └── collection: users           # User profiles, global config
+```
+
+### S3 Layout
+
+```
+s3://mail-agent-attachments/
+├── {user_id}/
+│   ├── {sha256_hash}.pdf
+│   ├── {sha256_hash}.docx
+│   └── ...
+```
+
+Content-addressed by SHA-256 hash for dedup. Original filename stored in
+Couchbase attachment metadata document.
+
+### HTTP Agent Interface
+
+Downstream agents register with:
+
+```json
+{
+  "agent_id": "invoice_processor",
+  "name": "Invoice Processor",
+  "endpoint": "https://agents.example.com/invoice",
+  "method": "POST",
+  "auth": {
+    "type": "bearer",
+    "token_ref": "vault:agent_tokens/invoice_processor"
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "message": { "$ref": "#/NormalizedMessage" },
+      "tags": { "type": "array", "items": { "type": "string" } },
+      "extracted_data": { "type": "object" },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "s3_key": { "type": "string" },
+            "filename": { "type": "string" },
+            "mime_type": { "type": "string" },
+            "ocr_text": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "retry": { "max_attempts": 3, "backoff": "exponential" },
+  "timeout_seconds": 30
+}
+```
+
+Delivery semantics: at-least-once with idempotency key (message_id + agent_id).
+Failed deliveries logged to audit trail and retried with exponential backoff.
+
 ## Open Questions
 
-1. **Tech stack** — Python (good Gmail/Graph SDKs, Tesseract bindings) vs
-   TypeScript (good async story, Graph SDK)? Leaning Python.
-2. **Database** — PostgreSQL (structured data + full-text search via
-   tsvector) vs SQLite (simpler) + separate search (Typesense/Meilisearch)?
-3. **Blob storage** — S3-compatible (MinIO for self-hosted) vs local
-   filesystem vs database BLOBs?
-4. **Deployment** — Docker compose? Single binary? Cloud functions?
-5. **Agent interface** — HTTP callbacks? Message queue (Redis streams,
-   RabbitMQ)? In-process function calls?
-6. **Multi-tenancy** — shared DB with row-level isolation vs per-user DB?
-7. **OCR engine** — Tesseract (free, local) vs cloud OCR (Google Vision,
+1. **Deployment** — Docker compose? Single binary? Cloud functions?
+2. **Multi-tenancy** — scope-per-user (above) vs bucket-per-user?
+3. **OCR engine** — Tesseract (free, local) vs cloud OCR (Google Vision,
    Azure AI)?
 
 ## Phased Delivery
 
 ### Phase 1: Foundation
-- Project scaffold, config system, credential vault
+- Python project scaffold (pyproject.toml, src layout)
+- Config system (YAML/env-based)
+- Couchbase Capella connection + bucket/scope/collection setup
+- NormalizedMessage model (Pydantic)
 - Gmail connector (read-only, polling)
-- NormalizedMessage format
-- SQLite message DB
 - Basic rule engine (classify + tag)
+- Message dedup and state tracking
 
 ### Phase 2: Outlook + Attachments
-- Outlook/M365 connector
-- Attachment extraction and blob storage
-- PDF OCR pipeline (Tesseract)
-- Full-text search index
+- Outlook/M365 connector (Microsoft Graph, read-only)
+- Attachment extraction → S3 upload
+- PDF OCR pipeline (Tesseract) → text stored in Couchbase
+- Couchbase FTS index over OCR'd text + message bodies
 
 ### Phase 3: Agent Routing
-- Agent registry and router
+- Agent registry (Couchbase collection)
+- HTTP dispatcher with retry/backoff
+- Presigned S3 URLs for attachment access
 - Built-in agents (document filing, notifications)
-- Custom agent interface
 
 ### Phase 4: Production Hardening
-- Webhook/push notifications (replace polling)
-- Encrypted credential storage
-- Audit logging
+- Webhook/push notifications (Gmail Pub/Sub, Graph webhooks)
+- Encrypted credential vault
+- Audit logging (append-only collection)
 - Multi-user admin
 - Monitoring and alerting
