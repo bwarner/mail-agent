@@ -1,4 +1,4 @@
-export type Provider = 'gmail' | 'outlook'
+export type Provider = 'gmail' | 'outlook' | 'imap'
 
 export interface Attachment {
   attachment_id: string

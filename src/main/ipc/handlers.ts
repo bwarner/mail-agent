@@ -7,6 +7,7 @@ import { pluginManager } from '../plugins/manager'
 import { startGmailOAuth } from '../auth/gmail-auth'
 import { startOutlookOAuth } from '../auth/outlook-auth'
 import { isOAuthConfigured } from '../auth/oauth-config'
+import { vault } from '../auth/vault'
 import { generateEmbedding, prepareMessageText, configureEmbeddings, type EmbeddingProvider } from '../embeddings/service'
 import { llmInfer, setActiveProvider, getActiveProvider } from '../llm/service'
 import { storeLLMApiKey } from '../auth/token-store'
@@ -70,6 +71,55 @@ export function registerIpcHandlers(): void {
       polling_interval_ms: 60_000,
       folder_filters: [],
       last_sync: null
+    }
+
+    await db.saveAccount(account)
+    return account
+  })
+
+  // --- IMAP account setup (no OAuth — username/password) ---
+
+  ipcMain.handle('auth:addImap', async (_event, config: {
+    email: string
+    displayName: string
+    imapHost: string
+    imapPort: number
+    smtpHost: string
+    smtpPort: number
+    username: string
+    password: string
+    useTls: boolean
+  }) => {
+    const accountId = `imap:${config.email}`
+
+    await vault.storeJSON(`imap_config:${accountId}`, {
+      imap_host: config.imapHost,
+      imap_port: config.imapPort,
+      smtp_host: config.smtpHost,
+      smtp_port: config.smtpPort,
+      username: config.username,
+      use_tls: config.useTls
+    })
+    await vault.store(`imap_password:${accountId}`, config.password)
+
+    const connector = getConnector('imap')
+    const account: EmailAccount = {
+      account_id: accountId,
+      provider: 'imap',
+      email_address: config.email,
+      display_name: config.displayName || config.email,
+      enabled: true,
+      sync_cursor: null,
+      polling_interval_ms: 60_000,
+      folder_filters: [],
+      last_sync: null
+    }
+
+    const connected = await connector.testConnection(account)
+    if (!connected) {
+      await vault.remove(`imap_config:${accountId}`)
+      await vault.remove(`imap_password:${accountId}`)
+      throw new Error('Connection failed — check server, port, and credentials')
     }
 
     await db.saveAccount(account)

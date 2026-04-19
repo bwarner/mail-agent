@@ -7,7 +7,14 @@ const api = {
     providers: (): Promise<{ gmail: boolean; outlook: boolean }> =>
       ipcRenderer.invoke('auth:providers'),
     startOAuth: (provider: Provider): Promise<EmailAccount> =>
-      ipcRenderer.invoke('auth:startOAuth', provider)
+      ipcRenderer.invoke('auth:startOAuth', provider),
+    addImap: (config: {
+      email: string; displayName: string;
+      imapHost: string; imapPort: number;
+      smtpHost: string; smtpPort: number;
+      username: string; password: string; useTls: boolean
+    }): Promise<EmailAccount> =>
+      ipcRenderer.invoke('auth:addImap', config)
   },
   accounts: {
     list: (): Promise<EmailAccount[]> =>
