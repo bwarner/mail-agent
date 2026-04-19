@@ -3,6 +3,7 @@ import { db } from '../database'
 import { getConnector } from '../connectors'
 import { evaluateRules } from './rules'
 import { extractData } from './extractor'
+import { pluginManager } from '../plugins/manager'
 import type {
   EmailAccount,
   ProcessedMessage,
@@ -85,28 +86,60 @@ async function processAccount(account: EmailAccount): Promise<PipelineResult> {
         }
       }
 
+      // Step 3: Attachments (Phase 2)
       // Step 4: Data extraction
-      const extractedData = extractFields.length > 0
+      const extractedData: Record<string, unknown> = extractFields.length > 0
         ? extractData(message, extractFields)
         : {}
 
-      // Step 3: Attachments (Phase 2 — stub for now)
-      // Step 5: LLM (Phase 3 — stub for now)
+      // Step 5: LLM (Phase 4)
 
-      // Save processed message
-      const processed_message: ProcessedMessage = {
+      // Build processed message before plugins (plugins can enrich it)
+      const processedMessage: ProcessedMessage = {
         ...message,
         processed_at: new Date().toISOString(),
         tags: [...new Set(tags)],
         matched_rules: matches.map((m) => m.rule.name),
         extracted_data: extractedData,
-        routed_to: routeTargets
+        routed_to: routeTargets,
+        is_read: false,
+        is_starred: false,
+        is_draft: false
       }
 
-      await db.saveMessage(processed_message)
+      // Step 5.5: Processor plugins
+      const pluginResults = await pluginManager.processMessage(processedMessage)
+      for (const result of pluginResults) {
+        if (result.tags_added) {
+          processedMessage.tags.push(...result.tags_added)
+        }
+        if (result.tags_removed) {
+          processedMessage.tags = processedMessage.tags.filter(
+            (t) => !result.tags_removed!.includes(t)
+          )
+        }
+        if (result.extracted_data) {
+          Object.assign(processedMessage.extracted_data, result.extracted_data)
+        }
+      }
 
-      // Step 6: Agent routing (Phase 3 — stub for now)
-      // Will dispatch to registered agents via HTTP
+      processedMessage.tags = [...new Set(processedMessage.tags)]
+      await db.saveMessage(processedMessage)
+
+      // Step 6: Route to action plugins
+      for (const target of routeTargets) {
+        try {
+          await pluginManager.dispatchToAction(target, processedMessage)
+          await audit('agent_notified', message.message_id, account.account_id, {
+            agent: target
+          })
+        } catch (err) {
+          await audit('error', message.message_id, account.account_id, {
+            agent: target,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        }
+      }
 
       processed++
     } catch (err) {
@@ -117,7 +150,6 @@ async function processAccount(account: EmailAccount): Promise<PipelineResult> {
     }
   }
 
-  // Update sync cursor
   if (newCursor) {
     await db.updateSyncCursor(account.account_id, newCursor)
   }

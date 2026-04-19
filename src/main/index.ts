@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { db } from './database'
 import { registerIpcHandlers } from './ipc/handlers'
+import { pluginManager } from './plugins/manager'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -34,6 +35,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   await db.init()
+  await pluginManager.init()
   registerIpcHandlers()
   await createWindow()
 
@@ -51,5 +53,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
+  await pluginManager.shutdown()
   await db.close()
 })

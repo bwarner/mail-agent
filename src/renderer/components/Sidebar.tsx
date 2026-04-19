@@ -75,10 +75,10 @@ export function Sidebar({
           Rules
         </button>
         <button
-          className={`nav-item ${activeView === 'agents' ? 'active' : ''}`}
-          onClick={() => onViewChange('agents')}
+          className={`nav-item ${activeView === 'plugins' ? 'active' : ''}`}
+          onClick={() => onViewChange('plugins')}
         >
-          Agents
+          Plugins
         </button>
         <button
           className={`nav-item ${activeView === 'settings' ? 'active' : ''}`}

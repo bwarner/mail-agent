@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { EmailAccount, ProcessedMessage, Rule, ComposeMessage, FolderInfo } from '../shared/types'
+import type { PluginInfo } from '../shared/plugin-types'
 
 const api = {
   accounts: {
@@ -55,6 +56,18 @@ const api = {
   pipeline: {
     run: (accountId?: string): Promise<{ processed: number; errors: number }> =>
       ipcRenderer.invoke('pipeline:run', accountId)
+  },
+  plugins: {
+    list: (): Promise<PluginInfo[]> =>
+      ipcRenderer.invoke('plugins:list'),
+    enable: (name: string): Promise<void> =>
+      ipcRenderer.invoke('plugins:enable', name),
+    disable: (name: string): Promise<void> =>
+      ipcRenderer.invoke('plugins:disable', name),
+    configure: (name: string, config: Record<string, unknown>): Promise<void> =>
+      ipcRenderer.invoke('plugins:configure', name, config),
+    reload: (): Promise<void> =>
+      ipcRenderer.invoke('plugins:reload')
   }
 }
 

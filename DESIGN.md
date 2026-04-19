@@ -279,9 +279,180 @@ Python Process (paddleocr_server.py)
 3. **User's Python** — require user to install PaddleOCR separately
    (developer/power-user mode).
 
-### Agent Router
+### Plugin System
 
-Routes processed messages to downstream agents via HTTP callbacks.
+Plugins are the extensibility mechanism — they replace the hardcoded
+agent concept with a user-installable, sandboxed module system (think
+VS Code extensions for email).
+
+#### Plugin Types
+
+| Type          | When it runs                | What it can do                        |
+|---------------|------------------------------|---------------------------------------|
+| **processor** | During pipeline (step 5.5)   | Enrich messages: add tags, extract data, classify |
+| **action**    | After routing (step 6)       | React to messages: file docs, send notifications, call APIs |
+| **viewer**    | In the UI                    | Custom panels: dashboards, charts, reports |
+
+#### Plugin Manifest (`plugin.json`)
+
+```json
+{
+  "name": "receipt-scanner",
+  "version": "1.0.0",
+  "displayName": "Receipt Scanner",
+  "description": "Extracts purchase data from email receipts",
+  "author": "Jane Developer",
+  "license": "MIT",
+  "type": "processor",
+  "main": "index.js",
+  "permissions": [
+    "read_messages",
+    "read_attachments",
+    "write_tags",
+    "write_extracted_data"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "currency": { "type": "string", "default": "USD" },
+      "min_amount": { "type": "number", "default": 0 }
+    }
+  },
+  "hooks": {
+    "on_message": true,
+    "on_schedule": "*/30 * * * *"
+  }
+}
+```
+
+#### Available Permissions
+
+| Permission              | Description                                      |
+|------------------------|--------------------------------------------------|
+| `read_messages`        | Read message content, headers, metadata          |
+| `read_attachments`     | Access attachment files (read-only)              |
+| `write_tags`           | Add/remove tags on messages                      |
+| `write_extracted_data` | Add extracted data fields to messages             |
+| `http_outbound`        | Make HTTP requests to external services           |
+| `storage_read`         | Read from plugin's private storage namespace      |
+| `storage_write`        | Write to plugin's private storage namespace       |
+| `notifications`        | Show desktop notifications to the user            |
+
+**Explicitly forbidden** (never grantable):
+- `send_email` — plugins can NEVER send email
+- `modify_rules` — plugins cannot alter processing rules
+- `access_credentials` — plugins cannot read OAuth tokens or API keys
+
+#### Plugin Lifecycle
+
+```
+Install → Configure → Enable → [on_message / on_schedule] → Disable → Uninstall
+              │                         │
+              │                    Runs in Worker
+              │                    thread (sandboxed)
+              ▼                         │
+        User sets config            Returns result
+        via Settings UI             (tags, data, actions)
+```
+
+#### Plugin Sandbox
+
+Plugins run in **Node.js Worker threads** — isolated from the main
+process. They communicate via structured message passing only.
+
+```
+Main Process
+├── Plugin Manager
+│   ├── Plugin Registry (Couchbase Lite)
+│   ├── Plugin Loader (reads ~/.mail-agent/plugins/)
+│   └── Plugin Runner
+│       ├── Worker Thread: receipt-scanner
+│       ├── Worker Thread: slack-notifier
+│       └── Worker Thread: invoice-filer
+│
+│   Each Worker:
+│   ├── Receives: read-only message data (per permissions)
+│   ├── Returns: enrichments or action results
+│   ├── Has: own private storage namespace
+│   └── Cannot: access main process APIs, send email, read credentials
+```
+
+**Sandbox enforcement:**
+- Worker threads have no access to `ipcMain`, `electron`, or `safeStorage`
+- The plugin API is a narrow, typed interface passed via `postMessage`
+- File system access is restricted to the plugin's own directory
+- HTTP outbound requires the `http_outbound` permission and is logged
+
+#### Plugin API (available inside Worker)
+
+```typescript
+interface PluginContext {
+  // Read (requires read_messages)
+  message: ReadonlyMessage
+  attachments: ReadonlyAttachment[]
+
+  // Write (requires respective permissions)
+  addTag(tag: string): void
+  removeTag(tag: string): void
+  setExtractedData(key: string, value: unknown): void
+
+  // Storage (requires storage_read / storage_write)
+  storage: {
+    get(key: string): Promise<unknown>
+    set(key: string, value: unknown): Promise<void>
+    delete(key: string): Promise<void>
+    list(prefix?: string): Promise<string[]>
+  }
+
+  // HTTP (requires http_outbound)
+  fetch(url: string, opts?: RequestInit): Promise<Response>
+
+  // Notifications (requires notifications)
+  notify(title: string, body: string): void
+
+  // Config
+  config: Record<string, unknown>
+
+  // Logging
+  log: {
+    info(msg: string): void
+    warn(msg: string): void
+    error(msg: string): void
+  }
+}
+```
+
+#### Plugin Directory Structure
+
+```
+~/.mail-agent/plugins/
+├── receipt-scanner/
+│   ├── plugin.json          # Manifest
+│   ├── index.js             # Entry point
+│   ├── README.md            # Documentation
+│   └── icon.png             # Display icon (optional)
+├── slack-notifier/
+│   ├── plugin.json
+│   └── index.js
+└── invoice-filer/
+    ├── plugin.json
+    ├── index.js
+    └── templates/
+        └── invoice.hbs
+```
+
+#### Plugin Installation
+
+1. **Manual** — drop a plugin folder into `~/.mail-agent/plugins/`
+2. **URL** — paste a git repo URL or tarball URL in Settings
+3. **Future: Registry** — browse and install from a plugin marketplace
+
+### Agent Router (Legacy / HTTP Plugins)
+
+For backward compatibility and language-agnostic plugins, HTTP-based
+agents are still supported. They function as external plugins with
+the `http_outbound` permission.
+
 Agents are registered with:
 
 ```json
@@ -294,26 +465,6 @@ Agents are registered with:
     "type": "bearer",
     "token_ref": "encrypted:agent_tokens/invoice_processor"
   },
-  "input_schema": {
-    "type": "object",
-    "properties": {
-      "message": { "$ref": "#/NormalizedMessage" },
-      "tags": { "type": "array", "items": { "type": "string" } },
-      "extracted_data": { "type": "object" },
-      "attachments": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "local_path": { "type": "string" },
-            "filename": { "type": "string" },
-            "mime_type": { "type": "string" },
-            "ocr_text": { "type": "string" }
-          }
-        }
-      }
-    }
-  },
   "retry": { "max_attempts": 3, "backoff": "exponential" },
   "timeout_seconds": 30
 }
@@ -321,8 +472,6 @@ Agents are registered with:
 
 Delivery semantics: at-least-once with idempotency key (message_id + agent_id).
 Failed deliveries logged to audit trail and retried with exponential backoff.
-
-Agents can be local (localhost) or remote — HTTP is the universal interface.
 
 ### Storage Layer
 
@@ -337,7 +486,9 @@ database: mail_agent.cblite2
 ├── collection: rules           # User-defined processing rules
 ├── collection: accounts        # Email account configs + sync cursors
 ├── collection: audit_log       # Immutable action log
-├── collection: agents          # Registered downstream agents
+├── collection: agents          # Registered downstream agents (HTTP legacy)
+├── collection: plugins         # Installed plugin metadata + config
+├── collection: plugin_storage  # Plugin private key-value storage
 └── collection: llm_providers   # LLM provider configurations
 ```
 
@@ -361,6 +512,13 @@ database: mail_agent.cblite2
 │   └── ...
 ├── ocr_cache/
 │   └── {sha256_hash}.txt        # Cached OCR results
+├── plugins/                     # Installed plugins
+│   ├── receipt-scanner/
+│   │   ├── plugin.json
+│   │   └── index.js
+│   └── slack-notifier/
+│       ├── plugin.json
+│       └── index.js
 └── config/
     └── settings.json            # App settings (non-sensitive)
 ```
@@ -377,6 +535,8 @@ architecturally, not by convention:
 
 - Send operations are only exposed in the renderer → main IPC layer
 - The pipeline/rule engine has no access to send functions
+- Plugins run in Worker threads with no access to send APIs
+- Plugin permissions are declared in manifest and enforced at runtime
 - Agent HTTP callbacks receive read-only message data; no send endpoint exists
 - Every outbound email is logged in the audit trail with `origin: "user"`
 
@@ -450,17 +610,26 @@ This preserves protection against automated attack vectors:
 - Couchbase Lite FTS index over OCR'd text + message bodies
 - Attachment browser UI + inline attachment viewing
 
-### Phase 3: LLM + Agent Routing
+### Phase 3: Plugin System
+- Plugin manifest format and validation
+- Plugin loader (scan ~/.mail-agent/plugins/)
+- Plugin sandbox (Worker thread runner with permission enforcement)
+- Plugin API (PluginContext: messages, storage, fetch, notifications)
+- Plugin integration into processing pipeline
+- Plugin management UI (install, configure, enable/disable)
+- Example plugins: receipt-scanner, slack-notifier
+
+### Phase 4: LLM Integration
 - LLM provider system (Ollama, Claude, OpenAI, custom)
 - LLM settings UI (provider config, model selection)
-- Agent registry + HTTP dispatcher with retry
-- Built-in agents (document filing, notifications)
-- Agent status dashboard UI
+- LLM available as a plugin API (plugins can request LLM inference)
+- HTTP agent compatibility layer (legacy agents as external plugins)
 
-### Phase 4: Polish + Sync
+### Phase 5: Polish + Sync
 - Electron `safeStorage` for all credentials
 - Optional Couchbase Capella sync (multi-device)
 - Rule editor UI (visual rule builder)
 - Audit log viewer
 - Auto-updater (electron-updater)
 - Installer packaging (DMG, NSIS, AppImage)
+- Plugin registry / marketplace (future)

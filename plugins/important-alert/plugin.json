@@ -1,0 +1,35 @@
+{
+  "name": "important-alert",
+  "version": "1.0.0",
+  "displayName": "Important Email Alert",
+  "description": "Shows desktop notifications for emails from VIP senders or with urgent keywords",
+  "author": "Mail Agent Team",
+  "license": "MIT",
+  "type": "processor",
+  "main": "index.js",
+  "permissions": [
+    "read_messages",
+    "write_tags",
+    "notifications"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "vip_senders": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": [],
+        "description": "Email addresses that always trigger alerts"
+      },
+      "urgent_keywords": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["urgent", "asap", "immediately", "action required", "time sensitive"],
+        "description": "Keywords in subject that trigger alerts"
+      }
+    }
+  },
+  "hooks": {
+    "on_message": true
+  }
+}

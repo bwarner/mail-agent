@@ -8,6 +8,7 @@ import type {
   AgentRegistration,
   LLMProviderConfig
 } from '../shared/types'
+import type { PluginInfo } from '../shared/plugin-types'
 
 // Couchbase Lite JS types — imported at runtime
 // Using dynamic import to handle native module loading in Electron
@@ -20,6 +21,8 @@ const COLLECTION_NAMES = [
   'accounts',
   'audit_log',
   'agents',
+  'plugins',
+  'plugin_storage',
   'llm_providers'
 ] as const
 
@@ -269,6 +272,73 @@ export class Database {
     )
     const results = await query.execute()
     return results.map((row: any) => row.toJSON() as LLMProviderConfig)
+  }
+
+  // --- Plugins ---
+
+  async savePlugin(plugin: PluginInfo): Promise<void> {
+    const col = this.collection('plugins')
+    const doc = new cblite.MutableDocument(plugin.manifest.name)
+    doc.setData(plugin as unknown as Record<string, unknown>)
+    await col.save(doc)
+  }
+
+  async getPlugin(name: string): Promise<PluginInfo | null> {
+    const col = this.collection('plugins')
+    const doc = await col.getDocument(name)
+    if (!doc) return null
+    return doc.toJSON() as PluginInfo
+  }
+
+  async listPlugins(): Promise<PluginInfo[]> {
+    const query = this.db.createQuery(
+      `SELECT * FROM mail_agent.plugins`
+    )
+    const results = await query.execute()
+    return results.map((row: any) => row.toJSON() as PluginInfo)
+  }
+
+  async deletePlugin(name: string): Promise<void> {
+    const col = this.collection('plugins')
+    const doc = await col.getDocument(name)
+    if (doc) await col.delete(doc)
+  }
+
+  // --- Plugin Storage ---
+
+  async getPluginStorage(namespace: string, key: string): Promise<unknown> {
+    const col = this.collection('plugin_storage')
+    const docId = `${namespace}:${key}`
+    const doc = await col.getDocument(docId)
+    if (!doc) return null
+    const data = doc.toJSON() as any
+    return data.value
+  }
+
+  async setPluginStorage(namespace: string, key: string, value: unknown): Promise<void> {
+    const col = this.collection('plugin_storage')
+    const docId = `${namespace}:${key}`
+    const doc = new cblite.MutableDocument(docId)
+    doc.setData({ namespace, key, value } as Record<string, unknown>)
+    await col.save(doc)
+  }
+
+  async deletePluginStorage(namespace: string, key: string): Promise<void> {
+    const col = this.collection('plugin_storage')
+    const docId = `${namespace}:${key}`
+    const doc = await col.getDocument(docId)
+    if (doc) await col.delete(doc)
+  }
+
+  async listPluginStorage(namespace: string, prefix?: string): Promise<string[]> {
+    const query = this.db.createQuery(
+      `SELECT key FROM mail_agent.plugin_storage WHERE namespace = $ns`
+    )
+    query.setParameters({ ns: namespace })
+    const results = await query.execute()
+    const keys = results.map((row: any) => row.toJSON().key as string)
+    if (prefix) return keys.filter((k: string) => k.startsWith(prefix))
+    return keys
   }
 
   async close(): Promise<void> {

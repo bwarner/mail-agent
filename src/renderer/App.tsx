@@ -3,6 +3,7 @@ import { Sidebar } from './components/Sidebar'
 import { MessageList } from './components/MessageList'
 import { ThreadView } from './components/ThreadView'
 import { ComposeView, ComposeMode } from './components/ComposeView'
+import { PluginsView } from './components/PluginsView'
 import { useMessages } from './hooks/useMessages'
 import { useAccounts } from './hooks/useAccounts'
 import type { ProcessedMessage } from '../shared/types'
@@ -150,7 +151,9 @@ export function App() {
           </div>
         )}
 
-        {activeView !== 'inbox' && (
+        {activeView === 'plugins' && <PluginsView />}
+
+        {activeView !== 'inbox' && activeView !== 'plugins' && (
           <div className="empty-state">
             <div>{activeView.charAt(0).toUpperCase() + activeView.slice(1)}</div>
             <div>Coming in a future phase</div>

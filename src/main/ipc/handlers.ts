@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { db } from '../database'
 import { getConnector } from '../connectors'
 import { runPipeline } from '../pipeline'
+import { pluginManager } from '../plugins/manager'
 import type { EmailAccount, Rule, ComposeMessage } from '../../shared/types'
 
 export function registerIpcHandlers(): void {
@@ -156,6 +157,28 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('pipeline:run', async (_event, accountId?: string) => {
     return runPipeline(accountId)
+  })
+
+  // --- Plugins ---
+
+  ipcMain.handle('plugins:list', async () => {
+    return pluginManager.listPlugins()
+  })
+
+  ipcMain.handle('plugins:enable', async (_event, name: string) => {
+    await pluginManager.startPlugin(name)
+  })
+
+  ipcMain.handle('plugins:disable', async (_event, name: string) => {
+    await pluginManager.stopPlugin(name)
+  })
+
+  ipcMain.handle('plugins:configure', async (_event, name: string, config: Record<string, unknown>) => {
+    await pluginManager.configurePlugin(name, config)
+  })
+
+  ipcMain.handle('plugins:reload', async () => {
+    await pluginManager.reload()
   })
 }
 
