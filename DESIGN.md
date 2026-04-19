@@ -8,12 +8,12 @@ while also providing automated email classification, data extraction,
 OCR, and routing to downstream agents. Supports Gmail and Outlook/M365
 accounts. Each user can have multiple email accounts across providers.
 
-All data stays on the user's machine by default. Optional Couchbase
-Capella sync for multi-device access.
+All data stays on the user's machine by default. Optional Turso
+cloud sync for multi-device access.
 
 ## Principles
 
-- **Local-first** — data lives on-device in Couchbase Lite; no cloud required
+- **Local-first** — data lives on-device in SQLite via libSQL; no cloud required
 - **Full email client** — read, compose, reply, forward, manage folders/labels
 - **Security first** — agents/rules NEVER send email; only the human user can send via UI
 - **Rule-based by default** — deterministic processing; LLM is opt-in per rule
@@ -51,9 +51,9 @@ Capella sync for multi-device access.
 │                 │                    │             │             │  │
 │                 │                    │  ┌──────────▼───────────┐ │  │
 │                 └────────────────────┤  │  Storage Layer       │ │  │
-│                                      │  │  - Couchbase Lite DB │ │  │
+│                                      │  │  - SQLite (libSQL)   │ │  │
 │                                      │  │  - Local file store  │ │  │
-│                                      │  │  - FTS indexes       │ │  │
+│                                      │  │  - FTS5 indexes      │ │  │
 │                                      │  └──────────────────────┘ │  │
 │                                      └───────────────────────────┘  │
 │                                                                     │
@@ -85,7 +85,7 @@ Capella sync for multi-device access.
 |------------------|--------------------------|----------------------------------------------|
 | **Platform**     | Electron                 | Cross-platform desktop, Node.js + Chromium   |
 | **Language**     | TypeScript               | Type safety, Electron-native                 |
-| **Database**     | Couchbase Lite (JS)      | Embedded, local-first, optional Capella sync |
+| **Database**     | Turso (libSQL)           | Embedded SQLite, disk persistence, optional cloud sync |
 | **File storage** | Local filesystem         | Desktop app — no cloud dependency            |
 | **OCR**          | PaddleOCR (Python sidecar)| Modern, accurate, multilingual              |
 | **LLM**         | Pluggable (Ollama-first) | Local inference = free + private             |
@@ -149,7 +149,7 @@ Both fall back to polling when push is unavailable (default for Phase 1).
 Processes each NormalizedMessage through an ordered sequence of steps:
 
 #### Step 1: Dedup / State Check
-- Check `message_id` against Couchbase Lite messages collection
+- Check `message_id` against messages table
 - Skip already-processed messages
 - Idempotent — safe to re-process the same batch
 
@@ -195,7 +195,7 @@ Rules support: `contains`, `matches` (glob), `regex`, `exists`, `equals`,
 - Store original file on local filesystem (keyed by SHA-256 hash for dedup)
 - For PDFs: send to PaddleOCR sidecar → extract text
 - For images: OCR if flagged by rules
-- Store OCR text in Couchbase Lite (indexed via FTS)
+- Store OCR text in SQLite (indexed via FTS5)
 - Store metadata: filename, mime type, size, hash, local path, OCR text ref
 
 #### Step 4: Data Extractor
@@ -363,7 +363,7 @@ process. They communicate via structured message passing only.
 ```
 Main Process
 ├── Plugin Manager
-│   ├── Plugin Registry (Couchbase Lite)
+│   ├── Plugin Registry (SQLite)
 │   ├── Plugin Loader (reads ~/.mail-agent/plugins/)
 │   └── Plugin Runner
 │       ├── Worker Thread: receipt-scanner
@@ -475,37 +475,42 @@ Failed deliveries logged to audit trail and retried with exponential backoff.
 
 ### Storage Layer
 
-#### Couchbase Lite (Embedded)
+#### Turso / libSQL (Embedded SQLite)
 
-All structured data stored locally in Couchbase Lite JS:
+All structured data stored locally in a SQLite database via libSQL:
 
 ```
-database: mail_agent.cblite2
-├── collection: messages        # NormalizedMessage + processing metadata
-├── collection: attachments     # Attachment metadata (local path, OCR text)
-├── collection: rules           # User-defined processing rules
-├── collection: accounts        # Email account configs + sync cursors
-├── collection: audit_log       # Immutable action log
-├── collection: agents          # Registered downstream agents (HTTP legacy)
-├── collection: plugins         # Installed plugin metadata + config
-├── collection: plugin_storage  # Plugin private key-value storage
-└── collection: llm_providers   # LLM provider configurations
+database: mail_agent.db (SQLite)
+├── table: messages             # NormalizedMessage + processing metadata
+├── table: accounts             # Email account configs + sync cursors
+├── table: rules                # User-defined processing rules
+├── table: audit_log            # Immutable action log
+├── table: agents               # Registered downstream agents (HTTP legacy)
+├── table: plugins              # Installed plugin metadata + config
+├── table: plugin_storage       # Plugin private key-value storage
+├── table: llm_providers        # LLM provider configurations
+└── virtual: messages_fts       # FTS5 full-text search over messages
 ```
 
-**Couchbase Lite advantages for this use case:**
-- Embedded — no separate database server to install or manage
-- JSON document model — NormalizedMessage maps directly
-- Full-text search — built-in FTS for searching OCR'd text and message bodies
-- **Optional Capella sync** — if user later wants multi-device or cloud backup,
-  Couchbase Lite syncs to Capella via Sync Gateway with no schema changes
-- Conflict resolution — handles offline edits + sync gracefully
+JSON columns (TEXT with JSON) store flexible fields like headers,
+extracted_data, attachments, tags, and plugin config.
+
+**Turso/libSQL advantages for this use case:**
+- Embedded SQLite — no separate database server, single file on disk
+- Native Node.js support — works perfectly in Electron main process
+- Disk persistence — data survives restarts (unlike browser IndexedDB hacks)
+- FTS5 — SQLite's full-text search for OCR'd text and message bodies
+- **Optional Turso cloud sync** — if user later wants multi-device or backup,
+  libSQL embedded replicas sync to Turso cloud seamlessly
+- Battle-tested — SQLite is the most deployed database engine in the world
+- JSON functions — `json_extract()`, `json_each()` for flexible querying
 
 #### Local Filesystem (Attachments)
 
 ```
 ~/.mail-agent/
 ├── data/
-│   └── mail_agent.cblite2       # Couchbase Lite database
+│   └── mail_agent.db            # SQLite database (libSQL)
 ├── attachments/
 │   ├── {sha256_hash}.pdf
 │   ├── {sha256_hash}.docx
@@ -524,7 +529,7 @@ database: mail_agent.cblite2
 ```
 
 Content-addressed by SHA-256 hash for dedup. Original filename stored in
-Couchbase Lite attachment metadata document.
+the messages table attachments JSON column.
 
 ## Security
 
@@ -578,14 +583,14 @@ This preserves protection against automated attack vectors:
 ### Audit Trail
 - Every action logged: message received, rules matched, attachments stored,
   agents notified
-- Immutable audit log — append-only Couchbase Lite collection
+- Immutable audit log — append-only SQLite table
 - Viewable in app UI
 
 ## Phased Delivery
 
 ### Phase 1: Foundation (done)
 - Electron + React scaffold (electron-vite)
-- Couchbase Lite JS integration + collection setup
+- Turso/libSQL integration + schema setup
 - NormalizedMessage TypeScript types
 - Gmail connector (read-only, polling via `googleapis`)
 - Outlook connector (Microsoft Graph, read-only)
@@ -606,8 +611,8 @@ This preserves protection against automated attack vectors:
 ### Phase 2: Attachments + OCR
 - PaddleOCR sidecar (Python process, PyInstaller-packaged)
 - Attachment extraction → local filesystem
-- PDF/image OCR pipeline → text stored in Couchbase Lite
-- Couchbase Lite FTS index over OCR'd text + message bodies
+- PDF/image OCR pipeline → text stored in SQLite
+- FTS5 index over OCR'd text + message bodies
 - Attachment browser UI + inline attachment viewing
 
 ### Phase 3: Plugin System
@@ -627,7 +632,7 @@ This preserves protection against automated attack vectors:
 
 ### Phase 5: Polish + Sync
 - Electron `safeStorage` for all credentials
-- Optional Couchbase Capella sync (multi-device)
+- Optional Turso cloud sync (multi-device)
 - Rule editor UI (visual rule builder)
 - Audit log viewer
 - Auto-updater (electron-updater)

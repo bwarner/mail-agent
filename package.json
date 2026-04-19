@@ -12,10 +12,9 @@
     "package": "electron-vite build && electron-builder"
   },
   "dependencies": {
-    "@couchbase/lite-js": "^1.0.0",
+    "@libsql/client": "^0.17.2",
     "@microsoft/microsoft-graph-client": "^3.0.0",
     "dompurify": "^3.1.0",
-    "fake-indexeddb": "^6.2.5",
     "googleapis": "^144.0.0",
     "isomorphic-fetch": "^3.0.0",
     "jsdom": "^25.0.0",
