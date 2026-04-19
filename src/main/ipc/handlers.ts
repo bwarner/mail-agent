@@ -7,6 +7,8 @@ import { pluginManager } from '../plugins/manager'
 import { startGmailOAuth, configureGmailAuth } from '../auth/gmail-auth'
 import { startOutlookOAuth, configureOutlookAuth } from '../auth/outlook-auth'
 import { generateEmbedding, prepareMessageText, configureEmbeddings, type EmbeddingProvider } from '../embeddings/service'
+import { llmInfer, setActiveProvider, getActiveProvider } from '../llm/service'
+import type { LLMProviderConfig } from '../../shared/types'
 import type { EmailAccount, Rule, ComposeMessage, Provider } from '../../shared/types'
 
 export function registerIpcHandlers(): void {
@@ -249,6 +251,41 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('embeddings:stats', async () => {
     const unembedded = await db.countUnembeddedMessages()
     return { unembedded }
+  })
+
+  // --- LLM ---
+
+  ipcMain.handle('llm:listProviders', async () => {
+    return db.listLLMProviders()
+  })
+
+  ipcMain.handle('llm:saveProvider', async (_event, provider: LLMProviderConfig) => {
+    await db.saveLLMProvider(provider)
+    if (provider.enabled) setActiveProvider(provider)
+    return provider
+  })
+
+  ipcMain.handle('llm:setActive', async (_event, providerId: string) => {
+    const providers = await db.listLLMProviders()
+    const provider = providers.find((p) => p.provider_id === providerId)
+    if (provider) setActiveProvider(provider)
+  })
+
+  ipcMain.handle('llm:test', async (_event, providerId: string) => {
+    const providers = await db.listLLMProviders()
+    const provider = providers.find((p) => p.provider_id === providerId)
+    if (!provider) throw new Error('Provider not found')
+
+    const prev = getActiveProvider()
+    setActiveProvider(provider)
+    try {
+      const result = await llmInfer({ prompt: 'Say "hello" in one word.', maxTokens: 10 })
+      return { success: true, response: result.text }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      if (prev) setActiveProvider(prev)
+    }
   })
 }
 

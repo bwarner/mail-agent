@@ -4,6 +4,7 @@ import { getConnector } from '../connectors'
 import { evaluateRules } from './rules'
 import { extractData } from './extractor'
 import { generateEmbedding, prepareMessageText } from '../embeddings/service'
+import { llmInfer, getActiveProvider } from '../llm/service'
 import { pluginManager } from '../plugins/manager'
 import type {
   EmailAccount,
@@ -93,7 +94,29 @@ async function processAccount(account: EmailAccount): Promise<PipelineResult> {
         ? extractData(message, extractFields)
         : {}
 
-      // Step 5: LLM (Phase 4)
+      // Step 5: LLM enrichment (for rules with use_llm: true)
+      const llmRules = matches.filter((m) => m.rule.use_llm)
+      if (llmRules.length > 0 && getActiveProvider()) {
+        try {
+          const llmResult = await llmInfer({
+            system: 'You are an email analysis assistant. Respond with JSON only.',
+            prompt: `Analyze this email and extract structured data.\n\nFrom: ${message.from_name} <${message.from_address}>\nSubject: ${message.subject}\n\n${message.body_text.slice(0, 4000)}\n\nRespond with JSON containing: { "category": string, "summary": string, "action_items": string[], "sentiment": "positive"|"neutral"|"negative", "priority": "high"|"medium"|"low" }`,
+            maxTokens: 500,
+            temperature: 0.3
+          })
+          try {
+            const parsed = JSON.parse(llmResult.text)
+            Object.assign(extractedData, { llm_analysis: parsed })
+          } catch {
+            extractedData.llm_raw = llmResult.text
+          }
+        } catch (err) {
+          await audit('error', message.message_id, account.account_id, {
+            step: 'llm',
+            error: err instanceof Error ? err.message : String(err)
+          })
+        }
+      }
 
       // Build processed message before plugins (plugins can enrich it)
       const processedMessage: ProcessedMessage = {

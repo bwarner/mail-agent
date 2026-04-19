@@ -77,6 +77,16 @@ const api = {
     reload: (): Promise<void> =>
       ipcRenderer.invoke('plugins:reload')
   },
+  llm: {
+    listProviders: (): Promise<any[]> =>
+      ipcRenderer.invoke('llm:listProviders'),
+    saveProvider: (provider: any): Promise<any> =>
+      ipcRenderer.invoke('llm:saveProvider', provider),
+    setActive: (providerId: string): Promise<void> =>
+      ipcRenderer.invoke('llm:setActive', providerId),
+    test: (providerId: string): Promise<{ success: boolean; response?: string; error?: string }> =>
+      ipcRenderer.invoke('llm:test', providerId)
+  },
   embeddings: {
     configure: (provider: { type: string; endpoint: string; model: string; apiKey?: string; dimensions: number }): Promise<void> =>
       ipcRenderer.invoke('embeddings:configure', provider),

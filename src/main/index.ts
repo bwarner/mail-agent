@@ -3,6 +3,7 @@ import { join } from 'path'
 import { db } from './database'
 import { registerIpcHandlers } from './ipc/handlers'
 import { pluginManager } from './plugins/manager'
+import { initLLM } from './llm/service'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -58,6 +59,7 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   await db.init()
+  await initLLM()
   await pluginManager.init()
   registerIpcHandlers()
   await createWindow()
