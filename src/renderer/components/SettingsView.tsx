@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import type { EmailAccount } from '../../shared/types'
 
 export function SettingsView() {
@@ -252,22 +252,76 @@ export function SettingsView() {
         )}
 
         {tab === 'general' && (
-          <div className="settings-section">
-            <h3>General</h3>
-            <div className="settings-list-item">
-              <div>
-                <div className="settings-item-title">Mail Agent</div>
-                <div className="settings-item-sub">v0.1.0 — Local-first email client + intelligent agent</div>
-              </div>
-            </div>
-            <div className="settings-list-item">
-              <div>
-                <div className="settings-item-title">Database</div>
-                <div className="settings-item-sub">Turso (libSQL / SQLite) with vector search</div>
-              </div>
+          <GeneralTab />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function GeneralTab() {
+  const [vaultStatus, setVaultStatus] = useState<{ encryptionAvailable: boolean; storedKeys: number } | null>(null)
+
+  useEffect(() => {
+    window.mailAgent.vault.status().then(setVaultStatus).catch(() => {})
+  }, [])
+
+  return (
+    <div className="settings-section">
+      <h3>General</h3>
+      <div className="settings-list">
+        <div className="settings-list-item">
+          <div>
+            <div className="settings-item-title">Mail Agent</div>
+            <div className="settings-item-sub">v0.1.0 — Local-first email client + intelligent agent</div>
+          </div>
+        </div>
+        <div className="settings-list-item">
+          <div>
+            <div className="settings-item-title">Database</div>
+            <div className="settings-item-sub">Turso (libSQL / SQLite) with FTS5 + vector search</div>
+          </div>
+        </div>
+        <div className="settings-list-item">
+          <div>
+            <div className="settings-item-title">Credential Vault</div>
+            <div className="settings-item-sub">
+              {vaultStatus
+                ? `${vaultStatus.encryptionAvailable ? 'OS keychain encryption active' : 'Encryption unavailable (using base64 fallback)'} — ${vaultStatus.storedKeys} secret(s) stored`
+                : 'Loading...'}
             </div>
           </div>
-        )}
+        </div>
+      </div>
+
+      <div className="settings-section" style={{ marginTop: '24px' }}>
+        <h3>Security</h3>
+        <div className="settings-list">
+          <div className="settings-list-item">
+            <div>
+              <div className="settings-item-title">OAuth Tokens</div>
+              <div className="settings-item-sub">Encrypted via Electron safeStorage (OS keychain)</div>
+            </div>
+          </div>
+          <div className="settings-list-item">
+            <div>
+              <div className="settings-item-title">LLM API Keys</div>
+              <div className="settings-item-sub">Encrypted in vault, never stored as plaintext in database</div>
+            </div>
+          </div>
+          <div className="settings-list-item">
+            <div>
+              <div className="settings-item-title">Email Sending</div>
+              <div className="settings-item-sub">Only user-initiated via UI — rules, plugins, and agents cannot send email</div>
+            </div>
+          </div>
+          <div className="settings-list-item">
+            <div>
+              <div className="settings-item-title">Plugin Sandbox</div>
+              <div className="settings-item-sub">Plugins run in Worker threads — no access to credentials, send APIs, or main process</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

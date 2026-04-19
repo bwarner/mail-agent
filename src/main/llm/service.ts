@@ -1,7 +1,9 @@
 import type { LLMProviderConfig } from '../../shared/types'
 import { db } from '../database'
+import { loadLLMApiKey } from '../auth/token-store'
 
 let activeProvider: LLMProviderConfig | null = null
+let activeApiKey: string | null = null
 
 export async function initLLM(): Promise<void> {
   const providers = await db.listLLMProviders()
@@ -9,8 +11,9 @@ export async function initLLM(): Promise<void> {
   if (enabled) activeProvider = enabled
 }
 
-export function setActiveProvider(provider: LLMProviderConfig): void {
+export async function setActiveProvider(provider: LLMProviderConfig): Promise<void> {
   activeProvider = provider
+  activeApiKey = await loadLLMApiKey(provider.provider_id)
 }
 
 export function getActiveProvider(): LLMProviderConfig | null {
@@ -70,8 +73,8 @@ async function anthropicInfer(request: LLMRequest): Promise<LLMResponse> {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01'
   }
-  if (activeProvider!.api_key_ref) {
-    headers['x-api-key'] = activeProvider!.api_key_ref
+  if (activeApiKey) {
+    headers['x-api-key'] = activeApiKey
   }
 
   const messages = [{ role: 'user' as const, content: request.prompt }]
@@ -105,8 +108,8 @@ async function openaiInfer(request: LLMRequest): Promise<LLMResponse> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   }
-  if (activeProvider!.api_key_ref) {
-    headers['Authorization'] = `Bearer ${activeProvider!.api_key_ref}`
+  if (activeApiKey) {
+    headers['Authorization'] = `Bearer ${activeApiKey}`
   }
 
   const messages: any[] = []

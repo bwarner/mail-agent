@@ -8,6 +8,7 @@ import { startGmailOAuth, configureGmailAuth } from '../auth/gmail-auth'
 import { startOutlookOAuth, configureOutlookAuth } from '../auth/outlook-auth'
 import { generateEmbedding, prepareMessageText, configureEmbeddings, type EmbeddingProvider } from '../embeddings/service'
 import { llmInfer, setActiveProvider, getActiveProvider } from '../llm/service'
+import { storeLLMApiKey, storeOAuthConfig } from '../auth/token-store'
 import type { LLMProviderConfig } from '../../shared/types'
 import type { EmailAccount, Rule, ComposeMessage, Provider } from '../../shared/types'
 
@@ -42,6 +43,7 @@ export function registerIpcHandlers(): void {
   // --- OAuth ---
 
   ipcMain.handle('auth:configure', async (_event, provider: Provider, config: Record<string, string>) => {
+    await storeOAuthConfig(provider, config)
     if (provider === 'gmail') {
       configureGmailAuth({ clientId: config.clientId, clientSecret: config.clientSecret })
     } else if (provider === 'outlook') {
@@ -253,6 +255,29 @@ export function registerIpcHandlers(): void {
     return { unembedded }
   })
 
+  // --- Audit Log ---
+
+  ipcMain.handle('audit:list', async (_event, opts: {
+    limit?: number; offset?: number; event?: string; accountId?: string; messageId?: string
+  }) => {
+    return db.listAuditLog(opts)
+  })
+
+  ipcMain.handle('audit:count', async (_event, event?: string) => {
+    return db.countAuditLog(event)
+  })
+
+  // --- Vault info ---
+
+  ipcMain.handle('vault:status', async () => {
+    const { vault: v } = await import('../auth/vault')
+    const keys = await db.vaultList()
+    return {
+      encryptionAvailable: v.isEncryptionAvailable(),
+      storedKeys: keys.length
+    }
+  })
+
   // --- LLM ---
 
   ipcMain.handle('llm:listProviders', async () => {
@@ -260,15 +285,19 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('llm:saveProvider', async (_event, provider: LLMProviderConfig) => {
+    if (provider.api_key_ref) {
+      await storeLLMApiKey(provider.provider_id, provider.api_key_ref)
+      provider.api_key_ref = `vault:llm_key:${provider.provider_id}`
+    }
     await db.saveLLMProvider(provider)
-    if (provider.enabled) setActiveProvider(provider)
+    if (provider.enabled) await setActiveProvider(provider)
     return provider
   })
 
   ipcMain.handle('llm:setActive', async (_event, providerId: string) => {
     const providers = await db.listLLMProviders()
     const provider = providers.find((p) => p.provider_id === providerId)
-    if (provider) setActiveProvider(provider)
+    if (provider) await setActiveProvider(provider)
   })
 
   ipcMain.handle('llm:test', async (_event, providerId: string) => {
@@ -277,14 +306,14 @@ export function registerIpcHandlers(): void {
     if (!provider) throw new Error('Provider not found')
 
     const prev = getActiveProvider()
-    setActiveProvider(provider)
+    await setActiveProvider(provider)
     try {
       const result = await llmInfer({ prompt: 'Say "hello" in one word.', maxTokens: 10 })
       return { success: true, response: result.text }
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) }
     } finally {
-      if (prev) setActiveProvider(prev)
+      if (prev) await setActiveProvider(prev)
     }
   })
 }

@@ -7,6 +7,7 @@ import { PluginsView } from './components/PluginsView'
 import { AddAccountDialog } from './components/AddAccountDialog'
 import { SettingsView } from './components/SettingsView'
 import { RulesView } from './components/RulesView'
+import { AuditLogView } from './components/AuditLogView'
 import { useMessages } from './hooks/useMessages'
 import { useAccounts } from './hooks/useAccounts'
 import type { ProcessedMessage } from '../shared/types'
@@ -173,6 +174,8 @@ export function App() {
         {activeView === 'rules' && <RulesView />}
 
         {activeView === 'plugins' && <PluginsView />}
+
+        {activeView === 'audit' && <AuditLogView />}
 
         {activeView === 'settings' && <SettingsView />}
 

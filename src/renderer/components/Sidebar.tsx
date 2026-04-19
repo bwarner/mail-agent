@@ -83,6 +83,12 @@ export function Sidebar({
           Plugins
         </button>
         <button
+          className={`nav-item ${activeView === 'audit' ? 'active' : ''}`}
+          onClick={() => onViewChange('audit')}
+        >
+          Audit Log
+        </button>
+        <button
           className={`nav-item ${activeView === 'settings' ? 'active' : ''}`}
           onClick={() => onViewChange('settings')}
         >

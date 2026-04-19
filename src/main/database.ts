@@ -129,6 +129,13 @@ export class Database {
 
       CREATE INDEX IF NOT EXISTS idx_plugin_storage_ns ON plugin_storage(namespace);
 
+      CREATE TABLE IF NOT EXISTS vault (
+        key TEXT PRIMARY KEY,
+        encrypted_value TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
       CREATE TABLE IF NOT EXISTS llm_providers (
         provider_id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -573,6 +580,77 @@ export class Database {
       temperature: row.temperature,
       enabled: !!row.enabled
     }))
+  }
+
+  // --- Vault (encrypted credential storage) ---
+
+  async vaultSet(key: string, encryptedValue: string): Promise<void> {
+    await this.client.execute({
+      sql: `INSERT OR REPLACE INTO vault (key, encrypted_value, updated_at) VALUES (?, ?, datetime('now'))`,
+      args: [key, encryptedValue]
+    })
+  }
+
+  async vaultGet(key: string): Promise<string | null> {
+    const result = await this.client.execute({
+      sql: 'SELECT encrypted_value FROM vault WHERE key = ?',
+      args: [key]
+    })
+    if (result.rows.length === 0) return null
+    return (result.rows[0] as any).encrypted_value
+  }
+
+  async vaultDelete(key: string): Promise<void> {
+    await this.client.execute({ sql: 'DELETE FROM vault WHERE key = ?', args: [key] })
+  }
+
+  async vaultList(prefix?: string): Promise<string[]> {
+    const result = prefix
+      ? await this.client.execute({ sql: "SELECT key FROM vault WHERE key LIKE ?", args: [`${prefix}%`] })
+      : await this.client.execute('SELECT key FROM vault')
+    return result.rows.map((row: any) => row.key)
+  }
+
+  // --- Audit Log Queries ---
+
+  async listAuditLog(opts: {
+    limit?: number
+    offset?: number
+    event?: string
+    accountId?: string
+    messageId?: string
+  }): Promise<AuditEntry[]> {
+    const { limit = 100, offset = 0, event, accountId, messageId } = opts
+    const conditions: string[] = []
+    const args: any[] = []
+
+    if (event) { conditions.push('event = ?'); args.push(event) }
+    if (accountId) { conditions.push('account_id = ?'); args.push(accountId) }
+    if (messageId) { conditions.push('message_id = ?'); args.push(messageId) }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    args.push(limit, offset)
+
+    const result = await this.client.execute({
+      sql: `SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+      args
+    })
+
+    return result.rows.map((row: any) => ({
+      entry_id: row.entry_id,
+      timestamp: row.timestamp,
+      event: row.event,
+      message_id: row.message_id,
+      account_id: row.account_id,
+      details: JSON.parse(row.details || '{}')
+    }))
+  }
+
+  async countAuditLog(event?: string): Promise<number> {
+    const result = event
+      ? await this.client.execute({ sql: 'SELECT COUNT(*) as cnt FROM audit_log WHERE event = ?', args: [event] })
+      : await this.client.execute('SELECT COUNT(*) as cnt FROM audit_log')
+    return Number((result.rows[0] as any).cnt)
   }
 
   async close(): Promise<void> {

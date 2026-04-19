@@ -77,6 +77,16 @@ const api = {
     reload: (): Promise<void> =>
       ipcRenderer.invoke('plugins:reload')
   },
+  audit: {
+    list: (opts: { limit?: number; offset?: number; event?: string; accountId?: string; messageId?: string }): Promise<any[]> =>
+      ipcRenderer.invoke('audit:list', opts),
+    count: (event?: string): Promise<number> =>
+      ipcRenderer.invoke('audit:count', event)
+  },
+  vault: {
+    status: (): Promise<{ encryptionAvailable: boolean; storedKeys: number }> =>
+      ipcRenderer.invoke('vault:status')
+  },
   llm: {
     listProviders: (): Promise<any[]> =>
       ipcRenderer.invoke('llm:listProviders'),
