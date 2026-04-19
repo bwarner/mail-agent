@@ -15,7 +15,7 @@ export function useMessages(accountId?: string) {
         limit: 100,
         offset: 0
       })
-      setMessages(result)
+      setMessages(Array.isArray(result) ? result : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages')
     } finally {
@@ -31,7 +31,7 @@ export function useMessages(accountId?: string) {
     setError(null)
     try {
       const result = await window.mailAgent.messages.search(query)
-      setMessages(result)
+      setMessages(Array.isArray(result) ? result : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
     } finally {

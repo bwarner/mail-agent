@@ -1,5 +1,4 @@
 import { app } from 'electron'
-import { join } from 'path'
 import type {
   ProcessedMessage,
   EmailAccount,
@@ -10,194 +9,167 @@ import type {
 } from '../shared/types'
 import type { PluginInfo } from '../shared/plugin-types'
 
-// Couchbase Lite JS types — imported at runtime
-// Using dynamic import to handle native module loading in Electron
-let cblite: typeof import('cblite-js')
+let CouchbaseLite: typeof import('@couchbase/lite-js')
+let db: any
 
-const COLLECTION_NAMES = [
-  'messages',
-  'attachments',
-  'rules',
-  'accounts',
-  'audit_log',
-  'agents',
-  'plugins',
-  'plugin_storage',
-  'llm_providers'
+const COLLECTIONS = [
+  'messages', 'attachments', 'rules', 'accounts',
+  'audit_log', 'agents', 'plugins', 'plugin_storage', 'llm_providers'
 ] as const
 
-type CollectionName = (typeof COLLECTION_NAMES)[number]
+type CollectionName = (typeof COLLECTIONS)[number]
 
 export class Database {
-  private db: any
-  private collections: Map<CollectionName, any> = new Map()
+  private database: any
   private initialized = false
 
   async init(): Promise<void> {
     if (this.initialized) return
 
-    cblite = await import('cblite-js')
+    const fakeIdb = await import('fake-indexeddb')
+    CouchbaseLite = await import('@couchbase/lite-js')
 
-    const dbDir = join(app.getPath('userData'), 'data')
-    const config = new cblite.DatabaseConfiguration()
-    config.directory = dbDir
+    CouchbaseLite.Database.useIndexedDB(fakeIdb.indexedDB, fakeIdb.IDBKeyRange)
 
-    this.db = new cblite.Database('mail_agent', config)
-
-    for (const name of COLLECTION_NAMES) {
-      const collection = await this.db.createCollection(name, 'mail_agent')
-      this.collections.set(name, collection)
+    const collectionsConfig: Record<string, {}> = {}
+    for (const name of COLLECTIONS) {
+      collectionsConfig[name] = {}
     }
 
-    await this.createIndexes()
+    this.database = await CouchbaseLite.Database.open({
+      name: 'mail_agent',
+      version: 1,
+      collections: collectionsConfig
+    })
+
     this.initialized = true
   }
 
-  private async createIndexes(): Promise<void> {
-    const messages = this.collection('messages')
-
-    await messages.createIndex(
-      'idx_messages_account',
-      new cblite.ValueIndexConfiguration(['account_id', 'date'])
-    )
-    await messages.createIndex(
-      'idx_messages_tags',
-      new cblite.ValueIndexConfiguration(['tags'])
-    )
-    await messages.createIndex(
-      'idx_messages_date',
-      new cblite.ValueIndexConfiguration(['date'])
-    )
-
-    const auditLog = this.collection('audit_log')
-    await auditLog.createIndex(
-      'idx_audit_timestamp',
-      new cblite.ValueIndexConfiguration(['timestamp'])
-    )
-  }
-
-  private collection(name: CollectionName): any {
-    const col = this.collections.get(name)
-    if (!col) throw new Error(`Collection ${name} not initialized`)
-    return col
+  private col(name: CollectionName): any {
+    return this.database.collections[name]
   }
 
   // --- Messages ---
 
   async saveMessage(message: ProcessedMessage): Promise<void> {
-    const col = this.collection('messages')
-    const doc = new cblite.MutableDocument(message.message_id)
-    doc.setData(message as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('messages')
+    await col.save({ _id: message.message_id, ...message })
   }
 
   async getMessage(messageId: string): Promise<ProcessedMessage | null> {
-    const col = this.collection('messages')
-    const doc = await col.getDocument(messageId)
-    if (!doc) return null
-    return doc.toJSON() as ProcessedMessage
+    const col = this.col('messages')
+    try {
+      const doc = await col.getDocument(messageId)
+      return doc ? (doc as ProcessedMessage) : null
+    } catch {
+      return null
+    }
   }
 
   async hasMessage(messageId: string): Promise<boolean> {
-    const doc = await this.getMessage(messageId)
-    return doc !== null
+    return (await this.getMessage(messageId)) !== null
   }
 
   async listMessages(opts: {
     accountId?: string
+    folderId?: string
     limit?: number
     offset?: number
   }): Promise<ProcessedMessage[]> {
     const { accountId, limit = 50, offset = 0 } = opts
-    const col = this.collection('messages')
-
-    let query: any
+    let query: string
     if (accountId) {
-      query = this.db.createQuery(
-        `SELECT * FROM mail_agent.messages WHERE account_id = $acct ORDER BY date DESC LIMIT $limit OFFSET $offset`
-      )
-      query.setParameters({ acct: accountId, limit, offset })
+      query = `SELECT * FROM messages WHERE account_id = '${accountId}' ORDER BY date DESC LIMIT ${limit} OFFSET ${offset}`
     } else {
-      query = this.db.createQuery(
-        `SELECT * FROM mail_agent.messages ORDER BY date DESC LIMIT $limit OFFSET $offset`
-      )
-      query.setParameters({ limit, offset })
+      query = `SELECT * FROM messages ORDER BY date DESC LIMIT ${limit} OFFSET ${offset}`
     }
-
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as ProcessedMessage)
+    try {
+      const q = this.database.createQuery(query)
+      const results = await q.run()
+      return results as ProcessedMessage[]
+    } catch {
+      return []
+    }
   }
 
   async searchMessages(queryText: string): Promise<ProcessedMessage[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.messages WHERE subject LIKE $q OR body_text LIKE $q ORDER BY date DESC LIMIT 100`
-    )
-    query.setParameters({ q: `%${queryText}%` })
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as ProcessedMessage)
+    try {
+      const escaped = queryText.replace(/'/g, "''")
+      const q = this.database.createQuery(
+        `SELECT * FROM messages WHERE subject LIKE '%${escaped}%' OR body_text LIKE '%${escaped}%' ORDER BY date DESC LIMIT 100`
+      )
+      const results = await q.run()
+      return results as ProcessedMessage[]
+    } catch {
+      return []
+    }
   }
 
   async getThread(threadId: string): Promise<ProcessedMessage[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.messages WHERE thread_id = $tid ORDER BY date ASC`
-    )
-    query.setParameters({ tid: threadId })
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as ProcessedMessage)
+    try {
+      const escaped = threadId.replace(/'/g, "''")
+      const q = this.database.createQuery(
+        `SELECT * FROM messages WHERE thread_id = '${escaped}' ORDER BY date ASC`
+      )
+      const results = await q.run()
+      return results as ProcessedMessage[]
+    } catch {
+      return []
+    }
   }
 
   async updateMessageFlags(
     messageIds: string[],
     flags: Partial<Pick<ProcessedMessage, 'is_read' | 'is_starred'>>
   ): Promise<void> {
-    const col = this.collection('messages')
+    const col = this.col('messages')
     for (const id of messageIds) {
-      const doc = await col.getDocument(id)
+      const doc = await this.getMessage(id)
       if (!doc) continue
-      const mutable = doc.toMutable()
-      for (const [key, value] of Object.entries(flags)) {
-        mutable.setString(key, String(value))
-      }
-      await col.save(mutable)
+      const updated = { ...doc, ...flags }
+      await col.save({ _id: id, ...updated })
     }
   }
 
   async deleteMessages(messageIds: string[]): Promise<void> {
-    const col = this.collection('messages')
+    const col = this.col('messages')
     for (const id of messageIds) {
-      const doc = await col.getDocument(id)
-      if (doc) await col.delete(doc)
+      try {
+        await col.deleteDocument(id)
+      } catch {}
     }
   }
 
   // --- Accounts ---
 
   async saveAccount(account: EmailAccount): Promise<void> {
-    const col = this.collection('accounts')
-    const doc = new cblite.MutableDocument(account.account_id)
-    doc.setData(account as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('accounts')
+    await col.save({ _id: account.account_id, ...account })
   }
 
   async getAccount(accountId: string): Promise<EmailAccount | null> {
-    const col = this.collection('accounts')
-    const doc = await col.getDocument(accountId)
-    if (!doc) return null
-    return doc.toJSON() as EmailAccount
+    const col = this.col('accounts')
+    try {
+      const doc = await col.getDocument(accountId)
+      return doc ? (doc as EmailAccount) : null
+    } catch {
+      return null
+    }
   }
 
   async listAccounts(): Promise<EmailAccount[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.accounts ORDER BY email_address`
-    )
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as EmailAccount)
+    try {
+      const q = this.database.createQuery(`SELECT * FROM accounts`)
+      const results = await q.run()
+      return results as EmailAccount[]
+    } catch {
+      return []
+    }
   }
 
   async deleteAccount(accountId: string): Promise<void> {
-    const col = this.collection('accounts')
-    const doc = await col.getDocument(accountId)
-    if (doc) await col.delete(doc)
+    const col = this.col('accounts')
+    try { await col.deleteDocument(accountId) } catch {}
   }
 
   async updateSyncCursor(accountId: string, cursor: string): Promise<void> {
@@ -211,142 +183,147 @@ export class Database {
   // --- Rules ---
 
   async saveRule(rule: Rule): Promise<void> {
-    const col = this.collection('rules')
-    const doc = new cblite.MutableDocument(rule.rule_id)
-    doc.setData(rule as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('rules')
+    await col.save({ _id: rule.rule_id, ...rule })
   }
 
   async listRules(): Promise<Rule[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.rules WHERE enabled = true ORDER BY priority ASC`
-    )
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as Rule)
+    try {
+      const q = this.database.createQuery(
+        `SELECT * FROM rules WHERE enabled = true ORDER BY priority ASC`
+      )
+      const results = await q.run()
+      return results as Rule[]
+    } catch {
+      return []
+    }
   }
 
   async deleteRule(ruleId: string): Promise<void> {
-    const col = this.collection('rules')
-    const doc = await col.getDocument(ruleId)
-    if (doc) await col.delete(doc)
+    const col = this.col('rules')
+    try { await col.deleteDocument(ruleId) } catch {}
   }
 
   // --- Audit Log ---
 
   async appendAudit(entry: AuditEntry): Promise<void> {
-    const col = this.collection('audit_log')
-    const doc = new cblite.MutableDocument(entry.entry_id)
-    doc.setData(entry as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('audit_log')
+    await col.save({ _id: entry.entry_id, ...entry })
   }
 
   // --- Agents ---
 
   async saveAgent(agent: AgentRegistration): Promise<void> {
-    const col = this.collection('agents')
-    const doc = new cblite.MutableDocument(agent.agent_id)
-    doc.setData(agent as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('agents')
+    await col.save({ _id: agent.agent_id, ...agent })
   }
 
   async listAgents(): Promise<AgentRegistration[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.agents WHERE enabled = true`
-    )
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as AgentRegistration)
-  }
-
-  // --- LLM Providers ---
-
-  async saveLLMProvider(provider: LLMProviderConfig): Promise<void> {
-    const col = this.collection('llm_providers')
-    const doc = new cblite.MutableDocument(provider.provider_id)
-    doc.setData(provider as unknown as Record<string, unknown>)
-    await col.save(doc)
-  }
-
-  async listLLMProviders(): Promise<LLMProviderConfig[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.llm_providers`
-    )
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as LLMProviderConfig)
+    try {
+      const q = this.database.createQuery(`SELECT * FROM agents WHERE enabled = true`)
+      const results = await q.run()
+      return results as AgentRegistration[]
+    } catch {
+      return []
+    }
   }
 
   // --- Plugins ---
 
   async savePlugin(plugin: PluginInfo): Promise<void> {
-    const col = this.collection('plugins')
-    const doc = new cblite.MutableDocument(plugin.manifest.name)
-    doc.setData(plugin as unknown as Record<string, unknown>)
-    await col.save(doc)
+    const col = this.col('plugins')
+    await col.save({ _id: plugin.manifest.name, ...plugin })
   }
 
   async getPlugin(name: string): Promise<PluginInfo | null> {
-    const col = this.collection('plugins')
-    const doc = await col.getDocument(name)
-    if (!doc) return null
-    return doc.toJSON() as PluginInfo
+    const col = this.col('plugins')
+    try {
+      const doc = await col.getDocument(name)
+      return doc ? (doc as PluginInfo) : null
+    } catch {
+      return null
+    }
   }
 
   async listPlugins(): Promise<PluginInfo[]> {
-    const query = this.db.createQuery(
-      `SELECT * FROM mail_agent.plugins`
-    )
-    const results = await query.execute()
-    return results.map((row: any) => row.toJSON() as PluginInfo)
+    try {
+      const q = this.database.createQuery(`SELECT * FROM plugins`)
+      const results = await q.run()
+      return results as PluginInfo[]
+    } catch {
+      return []
+    }
   }
 
   async deletePlugin(name: string): Promise<void> {
-    const col = this.collection('plugins')
-    const doc = await col.getDocument(name)
-    if (doc) await col.delete(doc)
+    const col = this.col('plugins')
+    try { await col.deleteDocument(name) } catch {}
   }
 
   // --- Plugin Storage ---
 
   async getPluginStorage(namespace: string, key: string): Promise<unknown> {
-    const col = this.collection('plugin_storage')
+    const col = this.col('plugin_storage')
     const docId = `${namespace}:${key}`
-    const doc = await col.getDocument(docId)
-    if (!doc) return null
-    const data = doc.toJSON() as any
-    return data.value
+    try {
+      const doc = await col.getDocument(docId)
+      return doc ? (doc as any).value : null
+    } catch {
+      return null
+    }
   }
 
   async setPluginStorage(namespace: string, key: string, value: unknown): Promise<void> {
-    const col = this.collection('plugin_storage')
+    const col = this.col('plugin_storage')
     const docId = `${namespace}:${key}`
-    const doc = new cblite.MutableDocument(docId)
-    doc.setData({ namespace, key, value } as Record<string, unknown>)
-    await col.save(doc)
+    await col.save({ _id: docId, namespace, key, value })
   }
 
   async deletePluginStorage(namespace: string, key: string): Promise<void> {
-    const col = this.collection('plugin_storage')
+    const col = this.col('plugin_storage')
     const docId = `${namespace}:${key}`
-    const doc = await col.getDocument(docId)
-    if (doc) await col.delete(doc)
+    try { await col.deleteDocument(docId) } catch {}
   }
 
   async listPluginStorage(namespace: string, prefix?: string): Promise<string[]> {
-    const query = this.db.createQuery(
-      `SELECT key FROM mail_agent.plugin_storage WHERE namespace = $ns`
-    )
-    query.setParameters({ ns: namespace })
-    const results = await query.execute()
-    const keys = results.map((row: any) => row.toJSON().key as string)
-    if (prefix) return keys.filter((k: string) => k.startsWith(prefix))
-    return keys
+    try {
+      const escaped = namespace.replace(/'/g, "''")
+      const q = this.database.createQuery(
+        `SELECT key FROM plugin_storage WHERE namespace = '${escaped}'`
+      )
+      const results = await q.run()
+      const keys = results.map((r: any) => r.key as string)
+      if (prefix) return keys.filter((k: string) => k.startsWith(prefix))
+      return keys
+    } catch {
+      return []
+    }
+  }
+
+  // --- LLM Providers ---
+
+  async saveLLMProvider(provider: LLMProviderConfig): Promise<void> {
+    const col = this.col('llm_providers')
+    await col.save({ _id: provider.provider_id, ...provider })
+  }
+
+  async listLLMProviders(): Promise<LLMProviderConfig[]> {
+    try {
+      const q = this.database.createQuery(`SELECT * FROM llm_providers`)
+      const results = await q.run()
+      return results as LLMProviderConfig[]
+    } catch {
+      return []
+    }
   }
 
   async close(): Promise<void> {
-    if (this.db) {
-      await this.db.close()
+    if (this.database) {
+      this.database.close()
       this.initialized = false
     }
   }
 }
 
-export const db = new Database()
+export const database = new Database()
+export { database as db }

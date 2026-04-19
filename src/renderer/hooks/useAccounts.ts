@@ -9,7 +9,7 @@ export function useAccounts() {
     setLoading(true)
     try {
       const result = await window.mailAgent.accounts.list()
-      setAccounts(result)
+      setAccounts(Array.isArray(result) ? result : [])
     } catch {
       setAccounts([])
     } finally {
