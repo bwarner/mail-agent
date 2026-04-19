@@ -1,7 +1,7 @@
 import { vault } from './vault'
 
 const OAUTH_PREFIX = 'oauth:'
-const OAUTH_CONFIG_PREFIX = 'oauth_config:'
+
 
 export interface OAuthTokens {
   access_token: string
@@ -24,14 +24,6 @@ export async function deleteTokens(accountId: string): Promise<void> {
 
 export function isTokenExpired(tokens: OAuthTokens): boolean {
   return Date.now() >= tokens.expiry_date - 60_000
-}
-
-export async function storeOAuthConfig(provider: string, config: Record<string, string>): Promise<void> {
-  await vault.storeJSON(`${OAUTH_CONFIG_PREFIX}${provider}`, config)
-}
-
-export async function loadOAuthConfig(provider: string): Promise<Record<string, string> | null> {
-  return vault.loadJSON<Record<string, string>>(`${OAUTH_CONFIG_PREFIX}${provider}`)
 }
 
 export async function storeLLMApiKey(providerId: string, apiKey: string): Promise<void> {

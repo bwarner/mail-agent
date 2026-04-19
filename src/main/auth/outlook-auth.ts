@@ -2,39 +2,35 @@ import { shell } from 'electron'
 import { randomUUID } from 'crypto'
 import { startOAuthServer } from './oauth-server'
 import { storeTokens, loadTokens, isTokenExpired, type OAuthTokens } from './token-store'
+import { generatePKCE } from './pkce'
+import { OAUTH_CONFIG, isOAuthConfigured } from './oauth-config'
 
-const SCOPES = ['Mail.ReadWrite', 'Mail.Send', 'User.Read', 'offline_access']
 const AUTH_ENDPOINT = 'https://login.microsoftonline.com/common/oauth2/v2.0'
-
-export interface OutlookAuthConfig {
-  clientId: string
-  clientSecret?: string
-}
-
-let authConfig: OutlookAuthConfig | null = null
-
-export function configureOutlookAuth(config: OutlookAuthConfig): void {
-  authConfig = config
-}
 
 export async function startOutlookOAuth(): Promise<{
   email: string
   displayName: string
   accountId: string
 }> {
-  if (!authConfig) throw new Error('Outlook OAuth not configured — set client ID in Settings')
+  if (!isOAuthConfigured('outlook')) {
+    throw new Error('Outlook OAuth not configured. Set AZURE_CLIENT_ID in oauth-config.ts before distributing.')
+  }
 
+  const config = OAUTH_CONFIG.outlook
+  const pkce = generatePKCE()
   const server = await startOAuthServer()
   const redirectUri = `http://127.0.0.1:${server.port}`
   const state = randomUUID()
 
   const params = new URLSearchParams({
-    client_id: authConfig.clientId,
+    client_id: config.clientId,
     response_type: 'code',
     redirect_uri: redirectUri,
-    scope: SCOPES.join(' '),
+    scope: config.scopes.join(' '),
     state,
-    response_mode: 'query'
+    response_mode: 'query',
+    code_challenge: pkce.challenge,
+    code_challenge_method: 'S256'
   })
 
   shell.openExternal(`${AUTH_ENDPOINT}/authorize?${params}`)
@@ -46,16 +42,14 @@ export async function startOutlookOAuth(): Promise<{
       throw new Error('OAuth state mismatch — possible CSRF attack')
     }
 
+    // PKCE token exchange — no client_secret needed for public clients
     const tokenParams = new URLSearchParams({
-      client_id: authConfig.clientId,
+      client_id: config.clientId,
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri,
-      scope: SCOPES.join(' ')
+      code_verifier: pkce.verifier
     })
-    if (authConfig.clientSecret) {
-      tokenParams.set('client_secret', authConfig.clientSecret)
-    }
 
     const tokenResponse = await fetch(`${AUTH_ENDPOINT}/token`, {
       method: 'POST',
@@ -91,11 +85,10 @@ export async function startOutlookOAuth(): Promise<{
       access_token: tokenData.access_token,
       refresh_token: tokenData.refresh_token,
       expiry_date: Date.now() + tokenData.expires_in * 1000,
-      scope: SCOPES.join(' ')
+      scope: config.scopes.join(' ')
     }
 
     await storeTokens(accountId, oauthTokens)
-
     return { email, displayName, accountId }
   } finally {
     server.close()
@@ -103,22 +96,19 @@ export async function startOutlookOAuth(): Promise<{
 }
 
 export async function getOutlookToken(accountId: string): Promise<string> {
-  if (!authConfig) throw new Error('Outlook OAuth not configured')
-
+  const config = OAUTH_CONFIG.outlook
   const tokens = await loadTokens(accountId)
   if (!tokens) throw new Error(`No tokens found for ${accountId}`)
 
   if (!isTokenExpired(tokens)) return tokens.access_token
 
+  // Refresh with public client — no client_secret
   const params = new URLSearchParams({
-    client_id: authConfig.clientId,
+    client_id: config.clientId,
     grant_type: 'refresh_token',
     refresh_token: tokens.refresh_token,
-    scope: SCOPES.join(' ')
+    scope: config.scopes.join(' ')
   })
-  if (authConfig.clientSecret) {
-    params.set('client_secret', authConfig.clientSecret)
-  }
 
   const response = await fetch(`${AUTH_ENDPOINT}/token`, {
     method: 'POST',

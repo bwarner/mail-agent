@@ -4,13 +4,13 @@ import { db } from '../database'
 import { getConnector } from '../connectors'
 import { runPipeline } from '../pipeline'
 import { pluginManager } from '../plugins/manager'
-import { startGmailOAuth, configureGmailAuth } from '../auth/gmail-auth'
-import { startOutlookOAuth, configureOutlookAuth } from '../auth/outlook-auth'
+import { startGmailOAuth } from '../auth/gmail-auth'
+import { startOutlookOAuth } from '../auth/outlook-auth'
+import { isOAuthConfigured } from '../auth/oauth-config'
 import { generateEmbedding, prepareMessageText, configureEmbeddings, type EmbeddingProvider } from '../embeddings/service'
 import { llmInfer, setActiveProvider, getActiveProvider } from '../llm/service'
-import { storeLLMApiKey, storeOAuthConfig } from '../auth/token-store'
-import type { LLMProviderConfig } from '../../shared/types'
-import type { EmailAccount, Rule, ComposeMessage, Provider } from '../../shared/types'
+import { storeLLMApiKey } from '../auth/token-store'
+import type { LLMProviderConfig, EmailAccount, Rule, ComposeMessage, Provider } from '../../shared/types'
 
 export function registerIpcHandlers(): void {
   // --- Accounts ---
@@ -40,14 +40,12 @@ export function registerIpcHandlers(): void {
     return connector.getFolders(account)
   })
 
-  // --- OAuth ---
+  // --- OAuth (PKCE — no client secret needed) ---
 
-  ipcMain.handle('auth:configure', async (_event, provider: Provider, config: Record<string, string>) => {
-    await storeOAuthConfig(provider, config)
-    if (provider === 'gmail') {
-      configureGmailAuth({ clientId: config.clientId, clientSecret: config.clientSecret })
-    } else if (provider === 'outlook') {
-      configureOutlookAuth({ clientId: config.clientId, clientSecret: config.clientSecret })
+  ipcMain.handle('auth:providers', async () => {
+    return {
+      gmail: isOAuthConfigured('gmail'),
+      outlook: isOAuthConfigured('outlook')
     }
   })
 

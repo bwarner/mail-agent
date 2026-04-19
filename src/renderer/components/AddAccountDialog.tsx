@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import type { Provider } from '../../shared/types'
 
 interface AddAccountDialogProps {
@@ -6,32 +6,23 @@ interface AddAccountDialogProps {
   onAccountAdded: () => void
 }
 
-type Step = 'choose-provider' | 'enter-credentials' | 'connecting' | 'success' | 'error'
+type Step = 'choose-provider' | 'connecting' | 'success' | 'error'
 
 export function AddAccountDialog({ onClose, onAccountAdded }: AddAccountDialogProps) {
   const [step, setStep] = useState<Step>('choose-provider')
-  const [provider, setProvider] = useState<Provider | null>(null)
-  const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
   const [error, setError] = useState('')
   const [addedEmail, setAddedEmail] = useState('')
+  const [availableProviders, setAvailableProviders] = useState<{ gmail: boolean; outlook: boolean }>({ gmail: false, outlook: false })
 
-  const handleProviderSelect = (p: Provider) => {
-    setProvider(p)
-    setStep('enter-credentials')
-  }
+  useEffect(() => {
+    window.mailAgent.auth.providers().then(setAvailableProviders).catch(() => {})
+  }, [])
 
-  const handleConnect = async () => {
-    if (!provider || !clientId) return
+  const handleConnect = async (provider: Provider) => {
     setStep('connecting')
     setError('')
 
     try {
-      await window.mailAgent.auth.configure(provider, {
-        clientId,
-        clientSecret
-      })
-
       const account = await window.mailAgent.auth.startOAuth(provider)
       setAddedEmail(account.email_address)
       setStep('success')
@@ -52,61 +43,33 @@ export function AddAccountDialog({ onClose, onAccountAdded }: AddAccountDialogPr
 
         {step === 'choose-provider' && (
           <div className="dialog-body">
-            <p className="dialog-description">Choose your email provider:</p>
-            <div className="provider-grid">
-              <button className="provider-card" onClick={() => handleProviderSelect('gmail')}>
-                <div className="provider-name">Gmail</div>
-                <div className="provider-desc">Google Workspace & Gmail accounts</div>
-              </button>
-              <button className="provider-card" onClick={() => handleProviderSelect('outlook')}>
-                <div className="provider-name">Outlook</div>
-                <div className="provider-desc">Microsoft 365 & Outlook.com accounts</div>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === 'enter-credentials' && (
-          <div className="dialog-body">
             <p className="dialog-description">
-              Enter your {provider === 'gmail' ? 'Google Cloud' : 'Azure AD'} OAuth credentials.
-              {provider === 'gmail'
-                ? ' Create them at console.cloud.google.com under APIs & Services > Credentials.'
-                : ' Create them at portal.azure.com under App registrations.'}
+              Choose your email provider. You'll be redirected to sign in securely in your browser.
             </p>
-
-            <div className="dialog-fields">
-              <div className="compose-field">
-                <label>Client ID</label>
-                <input
-                  className="compose-input"
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  placeholder={provider === 'gmail' ? 'xxxxx.apps.googleusercontent.com' : 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'}
-                />
-              </div>
-              <div className="compose-field">
-                <label>Secret</label>
-                <input
-                  className="compose-input"
-                  type="password"
-                  value={clientSecret}
-                  onChange={(e) => setClientSecret(e.target.value)}
-                  placeholder="Client secret"
-                />
-              </div>
-            </div>
-
-            <div className="dialog-actions">
-              <button className="btn btn-secondary" onClick={() => setStep('choose-provider')}>
-                Back
+            <div className="provider-grid">
+              <button
+                className="provider-card"
+                onClick={() => handleConnect('gmail')}
+                disabled={!availableProviders.gmail}
+              >
+                <div className="provider-name">Gmail</div>
+                <div className="provider-desc">
+                  {availableProviders.gmail
+                    ? 'Google Workspace & Gmail accounts'
+                    : 'Not configured by developer'}
+                </div>
               </button>
               <button
-                className="btn btn-primary"
-                onClick={handleConnect}
-                disabled={!clientId}
+                className="provider-card"
+                onClick={() => handleConnect('outlook')}
+                disabled={!availableProviders.outlook}
               >
-                Connect
+                <div className="provider-name">Outlook</div>
+                <div className="provider-desc">
+                  {availableProviders.outlook
+                    ? 'Microsoft 365 & Outlook.com accounts'
+                    : 'Not configured by developer'}
+                </div>
               </button>
             </div>
           </div>
@@ -115,8 +78,8 @@ export function AddAccountDialog({ onClose, onAccountAdded }: AddAccountDialogPr
         {step === 'connecting' && (
           <div className="dialog-body dialog-center">
             <div className="dialog-spinner" />
-            <p>Opening browser for authentication...</p>
-            <p className="dialog-subdesc">Sign in and authorize Mail Agent in the browser window.</p>
+            <p>Opening your browser...</p>
+            <p className="dialog-subdesc">Sign in and authorize Mail Agent. This window will update automatically.</p>
           </div>
         )}
 
@@ -125,6 +88,9 @@ export function AddAccountDialog({ onClose, onAccountAdded }: AddAccountDialogPr
             <div className="dialog-success-icon">+</div>
             <h3>Account Connected</h3>
             <p>{addedEmail}</p>
+            <p className="dialog-subdesc" style={{ marginTop: '8px' }}>
+              Click Sync to start pulling emails.
+            </p>
             <button className="btn btn-primary" onClick={onClose} style={{ marginTop: '16px' }}>
               Done
             </button>
@@ -137,7 +103,7 @@ export function AddAccountDialog({ onClose, onAccountAdded }: AddAccountDialogPr
             <h3>Connection Failed</h3>
             <p className="dialog-error-text">{error}</p>
             <div className="dialog-actions">
-              <button className="btn btn-secondary" onClick={() => setStep('enter-credentials')}>
+              <button className="btn btn-secondary" onClick={() => setStep('choose-provider')}>
                 Try Again
               </button>
               <button className="btn btn-secondary" onClick={onClose}>

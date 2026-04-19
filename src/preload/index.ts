@@ -4,8 +4,8 @@ import type { PluginInfo } from '../shared/plugin-types'
 
 const api = {
   auth: {
-    configure: (provider: Provider, config: Record<string, string>): Promise<void> =>
-      ipcRenderer.invoke('auth:configure', provider, config),
+    providers: (): Promise<{ gmail: boolean; outlook: boolean }> =>
+      ipcRenderer.invoke('auth:providers'),
     startOAuth: (provider: Provider): Promise<EmailAccount> =>
       ipcRenderer.invoke('auth:startOAuth', provider)
   },
