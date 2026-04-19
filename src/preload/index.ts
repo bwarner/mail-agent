@@ -1,8 +1,14 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { EmailAccount, ProcessedMessage, Rule, ComposeMessage, FolderInfo } from '../shared/types'
+import type { EmailAccount, ProcessedMessage, Rule, ComposeMessage, FolderInfo, Provider } from '../shared/types'
 import type { PluginInfo } from '../shared/plugin-types'
 
 const api = {
+  auth: {
+    configure: (provider: Provider, config: Record<string, string>): Promise<void> =>
+      ipcRenderer.invoke('auth:configure', provider, config),
+    startOAuth: (provider: Provider): Promise<EmailAccount> =>
+      ipcRenderer.invoke('auth:startOAuth', provider)
+  },
   accounts: {
     list: (): Promise<EmailAccount[]> =>
       ipcRenderer.invoke('accounts:list'),
@@ -20,6 +26,8 @@ const api = {
       ipcRenderer.invoke('messages:list', opts),
     search: (query: string): Promise<ProcessedMessage[]> =>
       ipcRenderer.invoke('messages:search', query),
+    semanticSearch: (query: string): Promise<ProcessedMessage[]> =>
+      ipcRenderer.invoke('messages:semanticSearch', query),
     get: (messageId: string): Promise<ProcessedMessage | null> =>
       ipcRenderer.invoke('messages:get', messageId),
     thread: (threadId: string): Promise<ProcessedMessage[]> =>
@@ -68,6 +76,14 @@ const api = {
       ipcRenderer.invoke('plugins:configure', name, config),
     reload: (): Promise<void> =>
       ipcRenderer.invoke('plugins:reload')
+  },
+  embeddings: {
+    configure: (provider: { type: string; endpoint: string; model: string; apiKey?: string; dimensions: number }): Promise<void> =>
+      ipcRenderer.invoke('embeddings:configure', provider),
+    backfill: (): Promise<{ embedded: number; remaining: number }> =>
+      ipcRenderer.invoke('embeddings:backfill'),
+    stats: (): Promise<{ unembedded: number }> =>
+      ipcRenderer.invoke('embeddings:stats')
   }
 }
 

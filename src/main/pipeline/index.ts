@@ -3,6 +3,7 @@ import { db } from '../database'
 import { getConnector } from '../connectors'
 import { evaluateRules } from './rules'
 import { extractData } from './extractor'
+import { generateEmbedding, prepareMessageText } from '../embeddings/service'
 import { pluginManager } from '../plugins/manager'
 import type {
   EmailAccount,
@@ -125,6 +126,13 @@ async function processAccount(account: EmailAccount): Promise<PipelineResult> {
 
       processedMessage.tags = [...new Set(processedMessage.tags)]
       await db.saveMessage(processedMessage)
+
+      // Step 5.7: Generate vector embedding (async, non-blocking)
+      generateEmbedding(prepareMessageText(processedMessage))
+        .then((embedding) => {
+          if (embedding) return db.saveEmbedding(processedMessage.message_id, embedding)
+        })
+        .catch(() => {})
 
       // Step 6: Route to action plugins
       for (const target of routeTargets) {

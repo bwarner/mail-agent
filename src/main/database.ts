@@ -58,7 +58,8 @@ export class Database {
         routed_to TEXT DEFAULT '[]',
         is_read INTEGER DEFAULT 0,
         is_starred INTEGER DEFAULT 0,
-        is_draft INTEGER DEFAULT 0
+        is_draft INTEGER DEFAULT 0,
+        embedding F32_BLOB(768)
       );
 
       CREATE INDEX IF NOT EXISTS idx_messages_account ON messages(account_id, date);
@@ -286,6 +287,44 @@ export class Database {
       sql: `DELETE FROM messages WHERE message_id IN (${placeholders})`,
       args: messageIds
     })
+  }
+
+  // --- Vector Embeddings ---
+
+  async saveEmbedding(messageId: string, embedding: Float32Array): Promise<void> {
+    const vector = `[${Array.from(embedding).join(',')}]`
+    await this.client.execute({
+      sql: 'UPDATE messages SET embedding = vector32(?) WHERE message_id = ?',
+      args: [vector, messageId]
+    })
+  }
+
+  async semanticSearch(queryEmbedding: Float32Array, limit: number = 20): Promise<ProcessedMessage[]> {
+    const vector = `[${Array.from(queryEmbedding).join(',')}]`
+    const result = await this.client.execute({
+      sql: `SELECT *, vector_distance_cos(embedding, vector32(?)) AS distance
+            FROM messages
+            WHERE embedding IS NOT NULL
+            ORDER BY distance ASC
+            LIMIT ?`,
+      args: [vector, limit]
+    })
+    return result.rows.map((row) => this.rowToMessage(row))
+  }
+
+  async countUnembeddedMessages(): Promise<number> {
+    const result = await this.client.execute(
+      'SELECT COUNT(*) as cnt FROM messages WHERE embedding IS NULL'
+    )
+    return Number((result.rows[0] as any).cnt)
+  }
+
+  async getUnembeddedMessages(limit: number = 50): Promise<ProcessedMessage[]> {
+    const result = await this.client.execute({
+      sql: 'SELECT * FROM messages WHERE embedding IS NULL ORDER BY date DESC LIMIT ?',
+      args: [limit]
+    })
+    return result.rows.map((row) => this.rowToMessage(row))
   }
 
   // --- Accounts ---

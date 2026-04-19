@@ -4,6 +4,7 @@ import { MessageList } from './components/MessageList'
 import { ThreadView } from './components/ThreadView'
 import { ComposeView, ComposeMode } from './components/ComposeView'
 import { PluginsView } from './components/PluginsView'
+import { AddAccountDialog } from './components/AddAccountDialog'
 import { useMessages } from './hooks/useMessages'
 import { useAccounts } from './hooks/useAccounts'
 import type { ProcessedMessage } from '../shared/types'
@@ -19,8 +20,10 @@ export function App() {
   const [rightPanel, setRightPanel] = useState<RightPanel>({ type: 'none' })
   const [searchQuery, setSearchQuery] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const [showAddAccount, setShowAddAccount] = useState(false)
+  const [searchMode, setSearchMode] = useState<'text' | 'semantic'>('text')
 
-  const { accounts } = useAccounts()
+  const { accounts, refresh: refreshAccounts } = useAccounts()
   const { messages, loading, refresh, search } = useMessages()
 
   const handleSync = useCallback(async () => {
@@ -36,9 +39,13 @@ export function App() {
   const handleSearch = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault()
-      search(searchQuery)
+      if (!searchQuery.trim()) {
+        refresh()
+        return
+      }
+      search(searchQuery, searchMode)
     },
-    [searchQuery, search]
+    [searchQuery, search, searchMode, refresh]
   )
 
   const handleSelectMessage = useCallback((msg: ProcessedMessage) => {
@@ -89,18 +96,27 @@ export function App() {
         onViewChange={setActiveView}
         onCompose={handleCompose}
         onFolderSelect={handleFolderSelect}
+        onAddAccount={() => setShowAddAccount(true)}
       />
 
       <div className="main-content">
         <div className="toolbar">
-          <form onSubmit={handleSearch} style={{ flex: 1, display: 'flex', gap: '8px' }}>
+          <form onSubmit={handleSearch} style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
               className="search-input"
               type="text"
-              placeholder="Search messages..."
+              placeholder={searchMode === 'semantic' ? 'Semantic search...' : 'Search messages...'}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+            <button
+              type="button"
+              className={`btn-action ${searchMode === 'semantic' ? 'active-toggle' : ''}`}
+              onClick={() => setSearchMode(searchMode === 'text' ? 'semantic' : 'text')}
+              title={searchMode === 'semantic' ? 'Semantic search (AI)' : 'Text search'}
+            >
+              {searchMode === 'semantic' ? 'AI' : 'Aa'}
+            </button>
           </form>
           <button
             className="btn btn-primary"
@@ -167,6 +183,13 @@ export function App() {
           <span>{accounts.length} account(s) connected</span>
         </div>
       </div>
+
+      {showAddAccount && (
+        <AddAccountDialog
+          onClose={() => setShowAddAccount(false)}
+          onAccountAdded={refreshAccounts}
+        />
+      )}
     </div>
   )
 }

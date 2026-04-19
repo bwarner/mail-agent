@@ -4,7 +4,10 @@ import { db } from '../database'
 import { getConnector } from '../connectors'
 import { runPipeline } from '../pipeline'
 import { pluginManager } from '../plugins/manager'
-import type { EmailAccount, Rule, ComposeMessage } from '../../shared/types'
+import { startGmailOAuth, configureGmailAuth } from '../auth/gmail-auth'
+import { startOutlookOAuth, configureOutlookAuth } from '../auth/outlook-auth'
+import { generateEmbedding, prepareMessageText, configureEmbeddings, type EmbeddingProvider } from '../embeddings/service'
+import type { EmailAccount, Rule, ComposeMessage, Provider } from '../../shared/types'
 
 export function registerIpcHandlers(): void {
   // --- Accounts ---
@@ -34,6 +37,43 @@ export function registerIpcHandlers(): void {
     return connector.getFolders(account)
   })
 
+  // --- OAuth ---
+
+  ipcMain.handle('auth:configure', async (_event, provider: Provider, config: Record<string, string>) => {
+    if (provider === 'gmail') {
+      configureGmailAuth({ clientId: config.clientId, clientSecret: config.clientSecret })
+    } else if (provider === 'outlook') {
+      configureOutlookAuth({ clientId: config.clientId, clientSecret: config.clientSecret })
+    }
+  })
+
+  ipcMain.handle('auth:startOAuth', async (_event, provider: Provider) => {
+    let result: { email: string; displayName: string; accountId: string }
+
+    if (provider === 'gmail') {
+      result = await startGmailOAuth()
+    } else if (provider === 'outlook') {
+      result = await startOutlookOAuth()
+    } else {
+      throw new Error(`Unknown provider: ${provider}`)
+    }
+
+    const account: EmailAccount = {
+      account_id: result.accountId,
+      provider,
+      email_address: result.email,
+      display_name: result.displayName,
+      enabled: true,
+      sync_cursor: null,
+      polling_interval_ms: 60_000,
+      folder_filters: [],
+      last_sync: null
+    }
+
+    await db.saveAccount(account)
+    return account
+  })
+
   // --- Messages: read ---
 
   ipcMain.handle('messages:list', async (_event, opts: {
@@ -47,6 +87,12 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('messages:search', async (_event, query: string) => {
     return db.searchMessages(query)
+  })
+
+  ipcMain.handle('messages:semanticSearch', async (_event, query: string) => {
+    const embedding = await generateEmbedding(query)
+    if (!embedding) return db.searchMessages(query)
+    return db.semanticSearch(embedding)
   })
 
   ipcMain.handle('messages:get', async (_event, messageId: string) => {
@@ -179,6 +225,30 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('plugins:reload', async () => {
     await pluginManager.reload()
+  })
+
+  // --- Embeddings ---
+
+  ipcMain.handle('embeddings:configure', async (_event, provider: EmbeddingProvider) => {
+    configureEmbeddings(provider)
+  })
+
+  ipcMain.handle('embeddings:backfill', async () => {
+    const messages = await db.getUnembeddedMessages(100)
+    let embedded = 0
+    for (const msg of messages) {
+      const embedding = await generateEmbedding(prepareMessageText(msg))
+      if (embedding) {
+        await db.saveEmbedding(msg.message_id, embedding)
+        embedded++
+      }
+    }
+    return { embedded, remaining: await db.countUnembeddedMessages() }
+  })
+
+  ipcMain.handle('embeddings:stats', async () => {
+    const unembedded = await db.countUnembeddedMessages()
+    return { unembedded }
   })
 }
 

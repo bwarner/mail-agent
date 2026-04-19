@@ -7,6 +7,7 @@ interface SidebarProps {
   onViewChange: (view: string) => void
   onCompose: () => void
   onFolderSelect: (accountId: string, folderId: string) => void
+  onAddAccount: () => void
 }
 
 export function Sidebar({
@@ -14,7 +15,8 @@ export function Sidebar({
   activeView,
   onViewChange,
   onCompose,
-  onFolderSelect
+  onFolderSelect,
+  onAddAccount
 }: SidebarProps) {
   const [folders, setFolders] = useState<Map<string, FolderInfo[]>>(new Map())
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set())
@@ -89,7 +91,10 @@ export function Sidebar({
       </nav>
 
       <div className="sidebar-accounts">
-        <h3>Accounts</h3>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px' }}>
+          <h3 style={{ padding: 0 }}>Accounts</h3>
+          <button className="btn-action" onClick={onAddAccount}>+ Add</button>
+        </div>
         {accounts.length === 0 && (
           <div className="account-item">No accounts configured</div>
         )}

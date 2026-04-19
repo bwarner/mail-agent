@@ -359,6 +359,12 @@ body {
   background: var(--bg-primary);
 }
 
+.btn-action.active-toggle {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 /* Thread view */
 .thread-view {
   display: flex;
@@ -755,6 +761,141 @@ body {
   font-size: 12px;
   color: var(--text-secondary);
   word-break: break-all;
+}
+
+/* Dialog overlay */
+.dialog-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-header h2 { font-size: 18px; }
+
+.dialog-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.dialog-close:hover { color: var(--text-primary); }
+
+.dialog-body { padding: 20px; }
+
+.dialog-center { text-align: center; }
+
+.dialog-description {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.dialog-subdesc {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dialog-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.provider-grid {
+  display: flex;
+  gap: 12px;
+}
+
+.provider-card {
+  flex: 1;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.provider-card:hover {
+  border-color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.provider-name {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.provider-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dialog-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.dialog-success-icon {
+  font-size: 48px;
+  color: var(--success);
+  margin-bottom: 8px;
+}
+
+.dialog-error-icon {
+  font-size: 48px;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.dialog-error-text {
+  color: var(--accent);
+  font-size: 13px;
+  margin: 8px 0;
+  word-break: break-word;
 }
 
 /* Status bar */

@@ -23,14 +23,16 @@ export function useMessages(accountId?: string) {
     }
   }, [accountId])
 
-  const search = useCallback(async (query: string) => {
+  const search = useCallback(async (query: string, mode: 'text' | 'semantic' = 'text') => {
     if (!query.trim()) {
       return refresh()
     }
     setLoading(true)
     setError(null)
     try {
-      const result = await window.mailAgent.messages.search(query)
+      const result = mode === 'semantic'
+        ? await window.mailAgent.messages.semanticSearch(query)
+        : await window.mailAgent.messages.search(query)
       setMessages(Array.isArray(result) ? result : [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Search failed')
