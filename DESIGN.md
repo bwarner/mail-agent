@@ -2,11 +2,11 @@
 
 ## Overview
 
-A local-first desktop application (Electron) for email ingestion and
-processing. Pulls email from Gmail and Outlook/M365 accounts, classifies
-messages, extracts data and attachments, OCRs documents for search, and
-routes work to downstream agents. Each user can have multiple email
-accounts across different providers.
+A local-first desktop email client and intelligent processing agent.
+Functions as a full-featured email client (read, compose, reply, manage)
+while also providing automated email classification, data extraction,
+OCR, and routing to downstream agents. Supports Gmail and Outlook/M365
+accounts. Each user can have multiple email accounts across providers.
 
 All data stays on the user's machine by default. Optional Couchbase
 Capella sync for multi-device access.
@@ -14,7 +14,8 @@ Capella sync for multi-device access.
 ## Principles
 
 - **Local-first** — data lives on-device in Couchbase Lite; no cloud required
-- **Security first** — no auto-reply, no outbound email (prevents replay/spoofing)
+- **Full email client** — read, compose, reply, forward, manage folders/labels
+- **Security first** — agents/rules NEVER send email; only the human user can send via UI
 - **Rule-based by default** — deterministic processing; LLM is opt-in per rule
 - **LLM-agnostic** — pluggable LLM backend (Ollama local, Claude, OpenAI, etc.)
 - **Multi-account** — one user can connect N Gmail + M Outlook accounts
@@ -369,21 +370,29 @@ Couchbase Lite attachment metadata document.
 
 ## Security
 
-### No Outbound Email
-The system **never sends email**. No replies, no forwards, no drafts.
-This eliminates entire classes of attacks:
+### Send Security Model
+The **user** can compose, reply, and forward email through the UI.
+The **rule engine and agents can NEVER send email** — this is enforced
+architecturally, not by convention:
+
+- Send operations are only exposed in the renderer → main IPC layer
+- The pipeline/rule engine has no access to send functions
+- Agent HTTP callbacks receive read-only message data; no send endpoint exists
+- Every outbound email is logged in the audit trail with `origin: "user"`
+
+This preserves protection against automated attack vectors:
 - Replay attacks (attacker crafts email that triggers auto-reply to victim)
-- Spoofed sender exploitation
+- Spoofed sender exploitation via rules
 - Email loop amplification
-- Data exfiltration via reply
+- Data exfiltration via agent-triggered reply
 
 ### Credential Security
 - OAuth2 only — system never sees user passwords
 - Tokens encrypted at rest via Electron `safeStorage` API (uses OS keychain:
   Keychain on macOS, DPAPI on Windows, libsecret on Linux)
-- Minimal scopes: read-only email access
-  - Gmail: `gmail.readonly`
-  - Outlook: `Mail.Read`
+- OAuth scopes for full email client functionality:
+  - Gmail: `gmail.modify`, `gmail.compose`, `gmail.send`
+  - Outlook: `Mail.ReadWrite`, `Mail.Send`
 - Token refresh handled locally, refresh tokens encrypted separately
 - LLM API keys also stored via `safeStorage`
 - Per-account credential isolation
@@ -414,22 +423,32 @@ This eliminates entire classes of attacks:
 
 ## Phased Delivery
 
-### Phase 1: Foundation
-- Electron + React scaffold (electron-forge or electron-vite)
+### Phase 1: Foundation (done)
+- Electron + React scaffold (electron-vite)
 - Couchbase Lite JS integration + collection setup
 - NormalizedMessage TypeScript types
 - Gmail connector (read-only, polling via `googleapis`)
+- Outlook connector (Microsoft Graph, read-only)
 - Basic rule engine (classify + tag)
-- Message dedup and state tracking
-- Simple inbox viewer UI
+- Processing pipeline with dedup + extraction
+- Basic inbox viewer UI (dark theme, split-pane)
 
-### Phase 2: Outlook + OCR
-- Outlook/M365 connector (Microsoft Graph, read-only)
+### Phase 1.5: Email Client
+- Thread/conversation view (group messages by thread_id)
+- Compose, reply, reply-all, forward
+- Rich HTML email rendering (sandboxed)
+- Message management: read/unread, star, archive, delete, move
+- Folder/label navigation in sidebar
+- Multi-account send (pick "From" account)
+- Drafts support
+- Send operations restricted to user-initiated UI actions only
+
+### Phase 2: Attachments + OCR
 - PaddleOCR sidecar (Python process, PyInstaller-packaged)
 - Attachment extraction → local filesystem
 - PDF/image OCR pipeline → text stored in Couchbase Lite
 - Couchbase Lite FTS index over OCR'd text + message bodies
-- Attachment browser UI
+- Attachment browser UI + inline attachment viewing
 
 ### Phase 3: LLM + Agent Routing
 - LLM provider system (Ollama, Claude, OpenAI, custom)

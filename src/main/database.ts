@@ -134,6 +134,39 @@ export class Database {
     return results.map((row: any) => row.toJSON() as ProcessedMessage)
   }
 
+  async getThread(threadId: string): Promise<ProcessedMessage[]> {
+    const query = this.db.createQuery(
+      `SELECT * FROM mail_agent.messages WHERE thread_id = $tid ORDER BY date ASC`
+    )
+    query.setParameters({ tid: threadId })
+    const results = await query.execute()
+    return results.map((row: any) => row.toJSON() as ProcessedMessage)
+  }
+
+  async updateMessageFlags(
+    messageIds: string[],
+    flags: Partial<Pick<ProcessedMessage, 'is_read' | 'is_starred'>>
+  ): Promise<void> {
+    const col = this.collection('messages')
+    for (const id of messageIds) {
+      const doc = await col.getDocument(id)
+      if (!doc) continue
+      const mutable = doc.toMutable()
+      for (const [key, value] of Object.entries(flags)) {
+        mutable.setString(key, String(value))
+      }
+      await col.save(mutable)
+    }
+  }
+
+  async deleteMessages(messageIds: string[]): Promise<void> {
+    const col = this.collection('messages')
+    for (const id of messageIds) {
+      const doc = await col.getDocument(id)
+      if (doc) await col.delete(doc)
+    }
+  }
+
   // --- Accounts ---
 
   async saveAccount(account: EmailAccount): Promise<void> {

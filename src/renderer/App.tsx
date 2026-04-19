@@ -1,14 +1,21 @@
 import React, { useState, useCallback } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { MessageList } from './components/MessageList'
-import { MessageDetail } from './components/MessageDetail'
+import { ThreadView } from './components/ThreadView'
+import { ComposeView, ComposeMode } from './components/ComposeView'
 import { useMessages } from './hooks/useMessages'
 import { useAccounts } from './hooks/useAccounts'
 import type { ProcessedMessage } from '../shared/types'
 
+type RightPanel =
+  | { type: 'thread'; threadId: string }
+  | { type: 'compose'; mode: ComposeMode; replyTo?: ProcessedMessage }
+  | { type: 'none' }
+
 export function App() {
   const [activeView, setActiveView] = useState('inbox')
   const [selectedMessage, setSelectedMessage] = useState<ProcessedMessage | null>(null)
+  const [rightPanel, setRightPanel] = useState<RightPanel>({ type: 'none' })
   const [searchQuery, setSearchQuery] = useState('')
   const [syncing, setSyncing] = useState(false)
 
@@ -33,12 +40,54 @@ export function App() {
     [searchQuery, search]
   )
 
+  const handleSelectMessage = useCallback((msg: ProcessedMessage) => {
+    setSelectedMessage(msg)
+    if (msg.thread_id) {
+      setRightPanel({ type: 'thread', threadId: msg.thread_id })
+    }
+    if (!msg.is_read) {
+      window.mailAgent.messages.markRead([msg.message_id], true)
+    }
+  }, [])
+
+  const handleCompose = useCallback(() => {
+    setRightPanel({ type: 'compose', mode: 'new' })
+  }, [])
+
+  const handleReply = useCallback((msg: ProcessedMessage) => {
+    setRightPanel({ type: 'compose', mode: 'reply', replyTo: msg })
+  }, [])
+
+  const handleReplyAll = useCallback((msg: ProcessedMessage) => {
+    setRightPanel({ type: 'compose', mode: 'reply-all', replyTo: msg })
+  }, [])
+
+  const handleForward = useCallback((msg: ProcessedMessage) => {
+    setRightPanel({ type: 'compose', mode: 'forward', replyTo: msg })
+  }, [])
+
+  const handleComposeDone = useCallback(() => {
+    setRightPanel(
+      selectedMessage?.thread_id
+        ? { type: 'thread', threadId: selectedMessage.thread_id }
+        : { type: 'none' }
+    )
+    refresh()
+  }, [selectedMessage, refresh])
+
+  const handleFolderSelect = useCallback((_accountId: string, _folderId: string) => {
+    // TODO: filter messages by folder
+    setActiveView('inbox')
+  }, [])
+
   return (
     <div className="app-layout">
       <Sidebar
         accounts={accounts}
         activeView={activeView}
         onViewChange={setActiveView}
+        onCompose={handleCompose}
+        onFolderSelect={handleFolderSelect}
       />
 
       <div className="main-content">
@@ -66,15 +115,37 @@ export function App() {
 
         {activeView === 'inbox' && (
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            <div style={{ width: '45%', borderRight: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ width: '40%', borderRight: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <MessageList
                 messages={messages}
                 selectedId={selectedMessage?.message_id ?? null}
-                onSelect={setSelectedMessage}
+                onSelect={handleSelectMessage}
+                onRefresh={refresh}
               />
             </div>
             <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-              <MessageDetail message={selectedMessage} />
+              {rightPanel.type === 'thread' && (
+                <ThreadView
+                  threadId={rightPanel.threadId}
+                  onReply={handleReply}
+                  onReplyAll={handleReplyAll}
+                  onForward={handleForward}
+                />
+              )}
+              {rightPanel.type === 'compose' && (
+                <ComposeView
+                  mode={rightPanel.mode}
+                  replyTo={rightPanel.replyTo}
+                  accounts={accounts}
+                  onSend={handleComposeDone}
+                  onDiscard={handleComposeDone}
+                />
+              )}
+              {rightPanel.type === 'none' && (
+                <div className="empty-state">
+                  <div>Select a message or compose a new one</div>
+                </div>
+              )}
             </div>
           </div>
         )}
