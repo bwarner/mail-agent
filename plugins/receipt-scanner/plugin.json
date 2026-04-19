@@ -1,0 +1,34 @@
+{
+  "name": "receipt-scanner",
+  "version": "1.0.0",
+  "displayName": "Receipt Scanner",
+  "description": "Detects purchase receipts and extracts amounts, vendors, and dates from order confirmation emails",
+  "author": "Mail Agent Team",
+  "license": "MIT",
+  "type": "processor",
+  "main": "index.js",
+  "permissions": [
+    "read_messages",
+    "write_tags",
+    "write_extracted_data",
+    "storage_write"
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "currency_symbol": {
+        "type": "string",
+        "default": "$",
+        "description": "Currency symbol to look for"
+      },
+      "min_amount": {
+        "type": "number",
+        "default": 0,
+        "description": "Minimum amount to tag as receipt"
+      }
+    }
+  },
+  "hooks": {
+    "on_message": true
+  }
+}

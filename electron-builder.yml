@@ -1,0 +1,16 @@
+appId: com.mail-agent.app
+productName: Mail Agent
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - out/**/*
+  - "!node_modules/**/*"
+mac:
+  target: dmg
+  category: public.app-category.productivity
+win:
+  target: nsis
+linux:
+  target: AppImage
+  category: Office
