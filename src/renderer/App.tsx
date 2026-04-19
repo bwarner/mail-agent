@@ -5,6 +5,8 @@ import { ThreadView } from './components/ThreadView'
 import { ComposeView, ComposeMode } from './components/ComposeView'
 import { PluginsView } from './components/PluginsView'
 import { AddAccountDialog } from './components/AddAccountDialog'
+import { SettingsView } from './components/SettingsView'
+import { RulesView } from './components/RulesView'
 import { useMessages } from './hooks/useMessages'
 import { useAccounts } from './hooks/useAccounts'
 import type { ProcessedMessage } from '../shared/types'
@@ -22,9 +24,10 @@ export function App() {
   const [syncing, setSyncing] = useState(false)
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [searchMode, setSearchMode] = useState<'text' | 'semantic'>('text')
+  const [selectedFolder, setSelectedFolder] = useState<{ accountId: string; folderId: string } | null>(null)
 
   const { accounts, refresh: refreshAccounts } = useAccounts()
-  const { messages, loading, refresh, search } = useMessages()
+  const { messages, loading, refresh, search } = useMessages(selectedFolder?.accountId)
 
   const handleSync = useCallback(async () => {
     setSyncing(true)
@@ -83,8 +86,8 @@ export function App() {
     refresh()
   }, [selectedMessage, refresh])
 
-  const handleFolderSelect = useCallback((_accountId: string, _folderId: string) => {
-    // TODO: filter messages by folder
+  const handleFolderSelect = useCallback((accountId: string, folderId: string) => {
+    setSelectedFolder({ accountId, folderId })
     setActiveView('inbox')
   }, [])
 
@@ -167,14 +170,11 @@ export function App() {
           </div>
         )}
 
+        {activeView === 'rules' && <RulesView />}
+
         {activeView === 'plugins' && <PluginsView />}
 
-        {activeView !== 'inbox' && activeView !== 'plugins' && (
-          <div className="empty-state">
-            <div>{activeView.charAt(0).toUpperCase() + activeView.slice(1)}</div>
-            <div>Coming in a future phase</div>
-          </div>
-        )}
+        {activeView === 'settings' && <SettingsView />}
 
         <div className="status-bar">
           <span>
